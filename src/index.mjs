@@ -46,7 +46,15 @@ export async function produzir(pedido, cliente) {
   try {
     // 1) voz de cada cena (+ cartão final da marca)
     const cenas = cenasEntrada.map((c) => ({ ...c, texto: c.texto.trim() }));
-    if (marca.cartao_final) cenas.push({ texto: marca.cartao_final, cartaoTexto: marca.rodape || marca.cartao_final, semLegenda: true, final: true });
+    // Cartão final da marca: se o roteiro já termina citando o site, a última cena vira o cartão;
+    // senão, acrescenta uma cena com o texto do cartão final.
+    const ultima = cenas[cenas.length - 1];
+    const dominio = (marca.rodape || "").toLowerCase();
+    if (dominio && ultima.texto.toLowerCase().includes(dominio)) {
+      Object.assign(ultima, { cartaoTexto: marca.rodape, semLegenda: true, final: true });
+    } else if (marca.cartao_final) {
+      cenas.push({ texto: marca.cartao_final, cartaoTexto: marca.rodape || marca.cartao_final, semLegenda: true, final: true });
+    }
     await progresso(pedido.id, "voz", 5, `Gerando voz de ${cenas.length} cenas`);
     await emParalelo(cenas, 4, async (c, i) => {
       const v = await gerarVoz(c.texto, voz, path.join(pasta, `voz${i}.mp3`));

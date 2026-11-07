@@ -25,6 +25,7 @@ const pedido = {
         { texto: "É o espalhamento de Rayleigh: o azul se desvia em todas as direções." },
         { texto: "No fim da tarde, a luz atravessa muito mais ar até chegar em você." },
         { texto: "Então o Sol não muda de cor. Muda a mistura de luz que chega aos seus olhos." },
+        { texto: "Tem mais em fuiperguntar.com.br." },
       ],
     },
   },
