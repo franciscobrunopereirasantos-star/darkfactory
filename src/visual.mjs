@@ -42,7 +42,9 @@ async function videoPexels(busca, vertical, duracaoMin, usados) {
   const json = await pexels(
     `https://api.pexels.com/videos/search?query=${encodeURIComponent(busca)}&orientation=${orient}&size=medium&per_page=15`,
   );
-  for (const v of json.videos || []) {
+  // evita repetir o mesmo vídeo e o mesmo autor (clipes da mesma sessão parecem iguais)
+  const lista = [...(json.videos || [])].sort((a, b) => usados.has(`u${a.user?.id}`) - usados.has(`u${b.user?.id}`));
+  for (const v of lista) {
     if (usados.has(`v${v.id}`)) continue;
     if (v.duration < Math.min(duracaoMin, 6)) continue;
     const arquivos = (v.video_files || [])
@@ -51,6 +53,7 @@ async function videoPexels(busca, vertical, duracaoMin, usados) {
       .sort((a, b) => (vertical ? a.height - b.height : a.width - b.width)); // menor que ainda é HD
     if (arquivos.length) {
       usados.add(`v${v.id}`);
+      if (v.user?.id) usados.add(`u${v.user.id}`);
       return { tipo: "video", url: arquivos[0].link, credito: v.user?.name, fonte: v.url };
     }
   }
@@ -61,9 +64,11 @@ async function fotoPexels(busca, vertical, usados) {
   const json = await pexels(
     `https://api.pexels.com/v1/search?query=${encodeURIComponent(busca)}&orientation=${vertical ? "portrait" : "landscape"}&per_page=15`,
   );
-  for (const p of json.photos || []) {
+  const lista = [...(json.photos || [])].sort((a, b) => usados.has(`u${a.photographer_id}`) - usados.has(`u${b.photographer_id}`));
+  for (const p of lista) {
     if (usados.has(`f${p.id}`)) continue;
     usados.add(`f${p.id}`);
+    if (p.photographer_id) usados.add(`u${p.photographer_id}`);
     return { tipo: "imagem", url: vertical ? p.src.portrait || p.src.large2x : p.src.landscape || p.src.large2x, credito: p.photographer, fonte: p.url };
   }
   return null;

@@ -100,7 +100,7 @@ export async function montar({ cenas, marca = {}, aspecto = "9:16", pasta, saida
         tb += db;
       }
     }
-    tempos.push({ cena: i + 1, inicio: t, fim: t + d });
+    tempos.push({ cena: i + 1, inicio: t, fim: t + d, cartao: Boolean(c.cartaoTexto) });
     t += d;
   }
 
@@ -114,6 +114,8 @@ export async function montar({ cenas, marca = {}, aspecto = "9:16", pasta, saida
   await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(segs, "v.txt"), "-c", "copy", video]);
   await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(auds, "a.txt"), "-c", "copy", audio]);
 
+  // o rodapé some quando entra o cartão final (que já mostra o site)
+  const fimRodape = tempos.find((x) => x.cartao)?.inicio ?? t;
   const fsL = vertical ? 78 : 64, mvL = vertical ? 560 : 120;
   const fsM = Math.round(fsL * 0.55);
   const ass =
@@ -123,7 +125,7 @@ export async function montar({ cenas, marca = {}, aspecto = "9:16", pasta, saida
     `Style: M,Inter,${fsM},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,3,10,0,2,40,40,70,1\n\n` +
     "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" +
     legendas.map(([a, b, x]) => `Dialogue: 0,${ts(a)},${ts(b)},L,,0,0,0,,${assTexto(x).toUpperCase()}`).join("\n") +
-    (marca.rodape ? `\nDialogue: 0,${ts(0)},${ts(t)},M,,0,0,0,,${assTexto(marca.rodape)}` : "") +
+    (marca.rodape ? `\nDialogue: 0,${ts(0)},${ts(fimRodape)},M,,0,0,0,,${assTexto(marca.rodape)}` : "") +
     "\n";
   const legenda = path.join(pasta, "leg.ass");
   fs.writeFileSync(legenda, ass);
