@@ -43,7 +43,7 @@ const servidor = http.createServer((req, res) => {
     if (req.headers.authorization !== "Bearer dfw_teste" && !req.url.startsWith("/upload") && !req.url.startsWith("/arquivo")) return enviar({ erro: "token" }, 401);
     if (req.url.endsWith("/worker/pegar")) { const r = pego ? { pedido: null } : { pedido, cliente }; pego = true; return enviar(r); }
     if (req.url.endsWith("/worker/progresso")) { const j = json(); eventos.push(`${j.etapa} ${j.progresso}% ${j.mensagem ?? ""}`); return enviar({ ok: true }); }
-    if (req.url.endsWith("/worker/upload-url")) return enviar({ signedUrl: `http://127.0.0.1:${porta}/upload`, public_url: `http://127.0.0.1:${porta}/arquivo/video.mp4` });
+    if (req.url.endsWith("/worker/upload-url")) return enviar({ upload_url: `http://127.0.0.1:${porta}/upload`, url_final: `http://127.0.0.1:${porta}/arquivo/video.mp4` });
     if (req.url === "/upload") { entregue = buf; fs.writeFileSync(saidaFinal, buf); return enviar({ ok: true }); }
     if (req.url.endsWith("/worker/concluir")) { concluido = json(); return enviar({ ok: true }); }
     if (req.url.startsWith("/arquivo/")) { const f = path.join(pastaAssets, decodeURIComponent(req.url.slice(9))); res.writeHead(200); return res.end(fs.readFileSync(f)); }

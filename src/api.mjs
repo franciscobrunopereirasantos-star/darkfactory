@@ -29,13 +29,16 @@ export async function progresso(pedido_id, etapa, pct, mensagem, dados) {
   }
 }
 
-export const concluir = (corpo) => chamar("concluir", corpo);
+// A API recusa campos null: remove nulls (inclusive dentro de resultado) antes de enviar.
+const semNulos = (o) =>
+  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => [k, v && typeof v === "object" && !Array.isArray(v) ? semNulos(v) : v]));
+export const concluir = (corpo) => chamar("concluir", semNulos(corpo));
 
 // Pede URL assinada e envia o arquivo. Devolve a URL pública final.
 export async function enviarArquivo(pedido_id, nome, arquivo, tipo = "video/mp4") {
   const r = await chamar("upload-url", { pedido_id, nome });
   const destino = r.signedUrl || r.signed_url || r.upload_url || r.uploadUrl || r.url;
-  const publica = r.public_url || r.publicUrl || r.url_publica;
+  const publica = r.url_final || r.public_url || r.publicUrl || r.url_publica;
   if (!destino) throw new Error("upload-url não devolveu a URL assinada");
   const corpo = fs.readFileSync(arquivo);
   const up = await fetchComRetry(destino, {
