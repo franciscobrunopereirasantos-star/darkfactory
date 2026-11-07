@@ -51,7 +51,8 @@ export async function produzir(pedido, cliente) {
     const ultima = cenas[cenas.length - 1];
     const dominio = (marca.rodape || "").toLowerCase();
     if (dominio && ultima.texto.toLowerCase().includes(dominio)) {
-      Object.assign(ultima, { cartaoTexto: marca.rodape, semLegenda: true, final: true });
+      // frase curta tipo "Tem mais em site.com" vira o cartão; frase longa fica como cena normal
+      if (ultima.texto.length <= 60) Object.assign(ultima, { cartaoTexto: marca.rodape, semLegenda: true, final: true });
     } else if (marca.cartao_final) {
       cenas.push({ texto: marca.cartao_final, cartaoTexto: marca.rodape || marca.cartao_final, semLegenda: true, final: true });
     }
