@@ -1,0 +1,1 @@
+{"name":"darkfactory-worker","private":true,"type":"module","engines":{"node":">=20"},"scripts":{"worker":"node src/index.mjs","teste":"node teste/simulado.mjs"}}

@@ -1,0 +1,32 @@
+name: Fábrica de vídeos
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # rede de segurança: confere a fila 1x por hora (repo privado tem 2.000 min/mês grátis)
+  workflow_dispatch: {}      # botão "Run workflow" para rodar na hora
+  repository_dispatch:
+    types: [novo-pedido]     # a API pode acordar o worker assim que entra um pedido
+
+concurrency:
+  group: fabrica-worker
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+      - name: Rodar a fila
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          MAX_MINUTOS: "40"
+        run: node src/index.mjs
