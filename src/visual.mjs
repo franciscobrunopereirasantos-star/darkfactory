@@ -1,6 +1,6 @@
 // Escolha do visual de cada cena: imagem enviada pelo cliente > vídeo do Pexels > foto do Pexels > cartão liso.
 import path from "node:path";
-import { baixar, fetchComRetry, log } from "./util.mjs";
+import { baixar, fetchComRetry, ffmpegAnalise, log } from "./util.mjs";
 
 // Gera termos de busca em inglês para as cenas que não trouxeram "busca".
 export async function gerarBuscas(titulo, cenas) {
@@ -35,6 +35,13 @@ async function pexels(url) {
   const r = await fetchComRetry(url, { headers: { authorization: process.env.PEXELS_API_KEY } });
   if (!r.ok) throw new Error(`Pexels ${r.status}`);
   return r.json();
+}
+
+// Clipe escuro demais (céu noturno, fade para preto) vira "tela preta" no vídeo final: descarta.
+async function escuroDemais(arquivo, duracao) {
+  const saida = await ffmpegAnalise(["-t", String(Math.max(3, Math.ceil(duracao))), "-i", arquivo, "-vf", "blackdetect=d=0.5:pic_th=0.98", "-an", "-f", "null", "-"]);
+  const total = [...saida.matchAll(/black_duration:([\d.]+)/g)].reduce((s, m) => s + Number(m[1]), 0);
+  return total > 0.5;
 }
 
 async function videoPexels(busca, vertical, duracaoMin, usados) {
@@ -84,9 +91,15 @@ export async function escolherVisual({ cena, busca, vertical, duracao, usados, p
   const tentativas = [busca, busca.split(" ").slice(0, 2).join(" ")].filter((x, k, a) => x && a.indexOf(x) === k);
   for (const termo of tentativas) {
     try {
-      const v = await videoPexels(termo, vertical, duracao, usados);
-      if (v) {
+      // até 3 clipes por termo: pula os escuros demais
+      for (let k = 0; k < 3; k++) {
+        const v = await videoPexels(termo, vertical, duracao, usados);
+        if (!v) break;
         const arquivo = await baixar(v.url, path.join(pasta, `vid${i}.mp4`));
+        if (await escuroDemais(arquivo, duracao)) {
+          log(`cena ${i + 1}: clipe ${v.fonte} escuro demais, tentando outro`);
+          continue;
+        }
         return { tipo: "video", arquivo, busca: termo, fonte: v.fonte };
       }
       const f = await fotoPexels(termo, vertical, usados);

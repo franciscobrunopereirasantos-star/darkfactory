@@ -63,11 +63,14 @@ export async function produzir(pedido, cliente) {
       const v = await gerarVoz(c.texto, voz, path.join(pasta, `voz${i}.mp3`));
       c.audio = v.arquivo;
       // Acelera a fala sem mudar o tom (a voz da OpenAI sai ~20% mais lenta que a do Pictory).
-      if (velocidade !== 1) {
-        const rapido = path.join(pasta, `voz${i}-r.wav`);
-        await ffmpeg(["-i", c.audio, "-filter:a", `atempo=${velocidade}`, "-ar", "44100", rapido]);
-        c.audio = rapido;
-      }
+      // Também encurta pausas longas da própria voz (deixa no máximo ~0,6 s) e tira silêncio do começo.
+      const filtros = [
+        "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05:stop_periods=-1:stop_duration=0.4:stop_threshold=-45dB:stop_silence=0.2",
+      ];
+      if (velocidade !== 1) filtros.unshift(`atempo=${velocidade}`);
+      const rapido = path.join(pasta, `voz${i}-r.wav`);
+      await ffmpeg(["-i", c.audio, "-filter:a", filtros.join(","), "-ar", "44100", rapido]);
+      c.audio = rapido;
       custo += v.custo_usd;
     });
     await progresso(pedido.id, "voz", 30, "Voz pronta");
