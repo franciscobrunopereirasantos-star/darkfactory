@@ -42,4 +42,10 @@ if [ -f /root/work/erro_download.txt ]; then
 fi
 aviso "baixou" 35 "Download em $(( $(date +%s) - T0 )) s"
 curl -sL "https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/teste.py" -o teste.py
-python teste.py 2>&1 | tail -40
+aviso "memoria" 38 "RAM livre: $(free -g | awk '/Mem:/{print $7}') GB de $(free -g | awk '/Mem:/{print $2}') GB"
+python -u teste.py > teste.log 2>&1
+CODIGO=$?
+if [ $CODIGO -ne 0 ] || ! grep -q "Teste concluído" teste.log; then
+  OOM=$(dmesg 2>/dev/null | grep -i -m1 "killed process" | tr -d '"')
+  aviso "erro" 99 "python terminou com código $CODIGO. ${OOM} Últimas linhas: $(tail -15 teste.log | tr -d '"\\' | tr '\n' ' ' | cut -c1-1500)"
+fi

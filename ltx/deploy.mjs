@@ -21,7 +21,7 @@ for (const gpu of GPUS) {
     const d = await gql(`mutation { podFindAndDeployOnDemand(input: {
       cloudType: ALL, gpuCount: 1, gpuTypeId: ${s(gpu)}, name: "ltx-teste-darkfactory",
       imageName: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
-      containerDiskInGb: 180, volumeInGb: 0, minVcpuCount: 8, minMemoryInGb: 60,
+      containerDiskInGb: 180, volumeInGb: 0, minVcpuCount: 8, minMemoryInGb: 110,
       dockerArgs: ${s(cmd)}, ports: "", env: [${env}] }) { id costPerHr machine { gpuDisplayName } } }`);
     pod = d.podFindAndDeployOnDemand;
     if (pod?.id) { console.log(`GPU ligada: ${gpu} (US$ ${pod.costPerHr}/h) pod ${pod.id}`); break; }

@@ -40,15 +40,6 @@ def enviar(arquivo, nome):
 
 CENAS = [
     {
-        "nome": "ltx-macieira-i2v.mp4",
-        "tipo": "i2v",
-        "imagem": "https://cdn.kairogen.ai/gallery/images/6ad2287a63742eb015a00e2a/c9125162-b264-41a9-87b2-3bc576473190.png",
-        "w": 960, "h": 544,
-        "prompt": "The young man with long hair raises the drawing higher toward the hanging light bulb, his face lighting up "
-                  "with an amazed smile; the young man with thick glasses leans in and pushes his glasses up, nodding slowly; "
-                  "the bulb swings slightly. Painterly illustrated style preserved, gentle natural motion, warm amber light.",
-    },
-    {
         "nome": "ltx-signo-t2v.mp4",
         "tipo": "t2v",
         "w": 544, "h": 960,
@@ -64,6 +55,15 @@ CENAS = [
                   "camera in a colorful studio and says in Brazilian Portuguese, with clear lip sync: \"Você sabia que a Lua "
                   "também gira? Fica comigo que eu te explico.\" Expressive face, natural hand gestures, static camera.",
     },
+    {
+        "nome": "ltx-macieira-i2v.mp4",
+        "tipo": "i2v",
+        "imagem": "https://cdn.kairogen.ai/gallery/images/6ad2287a63742eb015a00e2a/c9125162-b264-41a9-87b2-3bc576473190.png",
+        "w": 960, "h": 544,
+        "prompt": "The young man with long hair raises the drawing higher toward the hanging light bulb, his face lighting up "
+                  "with an amazed smile; the young man with thick glasses leans in and pushes his glasses up, nodding slowly; "
+                  "the bulb swings slightly. Painterly illustrated style preserved, gentle natural motion, warm amber light.",
+    },
 ]
 
 
@@ -76,6 +76,8 @@ def main():
     t0 = time.time()
     pipe = LTX2Pipeline.from_pretrained(MODELO, dtype=torch.bfloat16)
     pipe.enable_model_cpu_offload()
+    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+        pipe.vae.enable_tiling()
     avisar("carregou", f"Modelo carregado em {time.time() - t0:.0f} s na {gpu}", {"gpu": gpu}, 40)
 
     i2v = None
@@ -97,7 +99,13 @@ def main():
             else:
                 runner = pipe
             t1 = time.time()
-            video, audio = runner(**args)
+            def passo(p, i, t, kw, _n=c["nome"]):
+                print(f"[ltx] {_n} passo {i} em {time.time() - t1:.0f} s", flush=True)
+                return kw
+            try:
+                video, audio = runner(**args, callback_on_step_end=passo)
+            except TypeError:
+                video, audio = runner(**args)
             seg = time.time() - t1
             saida = f"/root/work/{c['nome']}"
             encode_video(video[0], fps=24, audio=audio[0].float().cpu() if audio is not None else None,
