@@ -1,0 +1,29 @@
+name: Teste do motor LTX (RunPod)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ["ltx/disparo.txt"]   # mudar este arquivo dispara um novo teste
+
+concurrency:
+  group: ltx-teste
+  cancel-in-progress: false
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ligar GPU, testar e desligar
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
+          MAX_MIN: "80"
+        run: node ltx/deploy.mjs
