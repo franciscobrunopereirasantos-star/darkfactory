@@ -125,14 +125,14 @@ async function main() {
       log("fila vazia");
       break;
     }
-    log(`pedido ${pedido.id} (${pedido.formato}) de ${cliente?.slug ?? "?"}`);
+    log(`pedido ${pedido.id.slice(0, 8)}… (${pedido.formato}) de ${cliente?.slug ?? "?"}`);
     const t0 = Date.now();
     try {
       const r = await produzir(pedido, cliente);
       await concluir({ pedido_id: pedido.id, ...r });
-      log(`pedido ${pedido.id}: ${r.status} em ${Math.round((Date.now() - t0) / 1000)} s`);
+      log(`pedido ${pedido.id.slice(0, 8)}…: ${r.status} em ${Math.round((Date.now() - t0) / 1000)} s`);
     } catch (e) {
-      log(`pedido ${pedido.id} falhou:`, e.message);
+      log(`pedido ${pedido.id.slice(0, 8)}… falhou:`, e.message);
       try {
         await concluir({ pedido_id: pedido.id, status: "falhou", erro: e.message.slice(0, 1000) });
       } catch (e2) {
