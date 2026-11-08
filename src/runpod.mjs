@@ -19,8 +19,8 @@ export const VOLUME_DC = process.env.VOLUME_DC || "US-IL-1";
 
 // GPUs em ordem de preferência. sps = segundos de GPU por segundo de clipe (medido; o da L40S/6000 Ada é chute até o 1º lote).
 export const GPUS = [
-  { id: "NVIDIA L40S", preco: 0.86, sps: 40 },
-  { id: "NVIDIA RTX 6000 Ada Generation", preco: 0.77, sps: 40 },
+  { id: "NVIDIA L40S", preco: 1.09, sps: 40 },
+  { id: "NVIDIA RTX 6000 Ada Generation", preco: 0.95, sps: 40 },
   { id: "NVIDIA A100 80GB PCIe", preco: 1.64, sps: 20 },
   { id: "NVIDIA A100-SXM4-80GB", preco: 1.74, sps: 18 },
   { id: "NVIDIA H100 PCIe", preco: 2.39, sps: 14 },

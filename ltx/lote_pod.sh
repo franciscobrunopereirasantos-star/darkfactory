@@ -2,6 +2,7 @@
 # Pod do LOTE: prepara o ambiente (no volume de rede, quando houver), gera todos os clipes do lote e desliga.
 set -x
 export INICIO_POD=$(date +%s)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 desligar() {
   echo "[lote] desligando a GPU"
   curl -s -X POST "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" -H 'content-type: application/json' \

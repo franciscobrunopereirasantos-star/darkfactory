@@ -60,13 +60,37 @@ def main():
         pipe = LTX2ImageToVideoPipeline.from_pretrained(MODELO, dtype=torch.bfloat16)
     except TypeError:
         pipe = LTX2ImageToVideoPipeline.from_pretrained(MODELO, torch_dtype=torch.bfloat16)
+    vram_gb = torch.cuda.get_device_properties(0).total_memory / 2**30
+    modo = "bf16"
+    if vram_gb < 70:
+        # GPU de 48 GB: o transformer em bf16 não cabe junto com as ativações. Guarda os pesos em fp8 e
+        # calcula em bf16 (metade da memória do transformer).
+        try:
+            pipe.transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=torch.bfloat16)
+            modo = "fp8-armazenamento"
+        except Exception as e:  # noqa
+            print("[lote] layerwise casting indisponível:", e, flush=True)
     pipe.enable_model_cpu_offload()
     if hasattr(pipe.vae, "enable_tiling"):
         pipe.vae.enable_tiling()
-    avisar("carregou", f"LTX carregado em {time.time() - t0:.0f} s na {gpu}; {len(JOBS)} clipes na fila", {"gpu": gpu})
+    avisar("carregou", f"LTX carregado em {time.time() - t0:.0f} s na {gpu} ({vram_gb:.0f} GB, {modo}); {len(JOBS)} clipes na fila",
+           {"gpu": gpu, "modo": modo})
+
+    def modo_economico():
+        """Último recurso contra falta de memória: move camada por camada para a GPU (mais lento)."""
+        nonlocal modo
+        if modo.startswith("sequencial"):
+            return False
+        pipe.remove_all_hooks()
+        torch.cuda.empty_cache()
+        pipe.enable_sequential_cpu_offload()
+        modo = "sequencial+" + modo
+        avisar("memoria", f"Falta de memória na {gpu}: mudando para descarregamento sequencial", {"modo": modo})
+        return True
 
     total_gpu, total_clipe, ok = 0.0, 0.0, 0
     for k, j in enumerate(JOBS):
+      for tentativa in range(2):
         try:
             img = load_image(j["imagem_url"]).convert("RGB")
             w, h = tamanho_ltx(*img.size)
@@ -89,11 +113,19 @@ def main():
             total_gpu += gpu_s
             total_clipe += j["dur"]
             ok += 1
-            avisar("clipe", f"{k + 1}/{len(JOBS)} cena {j['cena']}: {gpu_s:.0f} s de GPU para {j['dur']:.2f} s ({gerar} quadros, {w}x{h})",
-                   {"pedido_id": j["pedido_id"], "cena": j["cena"], "segundos_gpu": round(gpu_s, 1), "dur": j["dur"]})
+            avisar("clipe", f"{k + 1}/{len(JOBS)} cena {j['cena']}: {gpu_s:.0f} s de GPU para {j['dur']:.2f} s ({gerar} quadros, {w}x{h}, {modo})",
+                   {"pedido_id": j["pedido_id"], "cena": j["cena"], "segundos_gpu": round(gpu_s, 1), "dur": j["dur"], "modo": modo})
+            break
+        except torch.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            if tentativa == 0 and modo_economico():
+                continue
+            avisar("erro_clipe", f"cena {j.get('cena')}: sem memória na GPU mesmo no modo econômico", {"pedido_id": j.get("pedido_id"), "cena": j.get("cena")})
+            break
         except Exception:
             avisar("erro_clipe", f"cena {j.get('cena')} do pedido {j.get('pedido_id')} falhou: {traceback.format_exc()[-1200:]}",
                    {"pedido_id": j.get("pedido_id"), "cena": j.get("cena")})
+            break
     sps = round(total_gpu / total_clipe, 1) if total_clipe else None
     avisar("gpu_fim", f"{ok}/{len(JOBS)} clipes; {total_gpu:.0f} s de geração; {sps} s de GPU por s de clipe na {gpu}",
            {"gpu": gpu, "clipes_ok": ok, "clipes_total": len(JOBS), "segundos_geracao": round(total_gpu), "seg_gpu_por_seg_clipe": sps})
