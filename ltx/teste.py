@@ -67,58 +67,78 @@ CENAS = [
 ]
 
 
-def main():
-    from diffusers import LTX2Pipeline
-    from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
-    from diffusers.utils import encode_video, load_image
+DESTILADO = dict(guidance_scale=1.0, stg_scale=0.0, modality_scale=1.0, guidance_rescale=0.0,
+                 audio_guidance_scale=1.0, audio_stg_scale=0.0, audio_modality_scale=1.0, audio_guidance_rescale=0.0)
 
-    gpu = torch.cuda.get_device_name(0)
+
+def gerar(runner, c, k, extra):
+    from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
+    from diffusers.utils import encode_video
+    args = dict(prompt=c["prompt"], width=c["w"], height=c["h"], num_frames=121, frame_rate=24.0,
+                sigmas=DISTILLED_SIGMA_VALUES, generator=torch.Generator("cuda").manual_seed(42),
+                output_type="np", return_dict=False, **DESTILADO, **extra)
+    t1 = time.time()
+
+    def passo(p, i, t, kw):
+        if i % 2 == 0:
+            avisar("passo", f"{c['nome']} passo {i} em {time.time() - t1:.0f} s", None, 40 + 20 * k)
+        return kw
+    try:
+        video, audio = runner(**args, callback_on_step_end=passo)
+    except TypeError as e:
+        if "callback" not in str(e):
+            raise
+        video, audio = runner(**args)
+    seg = time.time() - t1
+    saida = f"/root/work/{c['nome']}"
+    encode_video(video[0], fps=24, audio=audio[0].float().cpu() if audio is not None else None,
+                 audio_sample_rate=runner.vocoder.config.output_sampling_rate, output_path=saida)
+    url = enviar(saida, c["nome"])
+    r = {"cena": c["nome"], "segundos_gpu": round(seg, 1), "url": url}
+    avisar("clipe", f"{c['nome']}: {seg:.0f} s de GPU para 5 s de vídeo", r, 40 + 20 * (k + 1))
+    return r
+
+
+def carregar(classe):
     t0 = time.time()
-    pipe = LTX2Pipeline.from_pretrained(MODELO, dtype=torch.bfloat16)
+    try:
+        pipe = classe.from_pretrained(MODELO, dtype=torch.bfloat16)
+    except TypeError:
+        pipe = classe.from_pretrained(MODELO, torch_dtype=torch.bfloat16)
     pipe.enable_model_cpu_offload()
     if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
         pipe.vae.enable_tiling()
-    avisar("carregou", f"Modelo carregado em {time.time() - t0:.0f} s na {gpu}", {"gpu": gpu}, 40)
+    avisar("carregou", f"{classe.__name__} carregado em {time.time() - t0:.0f} s", None, 40)
+    return pipe
 
-    i2v = None
+
+def main():
+    import gc
+    from diffusers import LTX2Pipeline, LTX2ImageToVideoPipeline
+    from diffusers.utils import load_image
+
+    gpu = torch.cuda.get_device_name(0)
+    ativas = [x for x in os.environ.get("CENAS_ATIVAS", "").split(",") if x]
+    cenas = [c for c in CENAS if not ativas or c["nome"] in ativas]
     resultados = []
-    for k, c in enumerate(CENAS):
-        try:
-            args = dict(prompt=c["prompt"], width=c["w"], height=c["h"], num_frames=121, frame_rate=24.0,
-                        sigmas=DISTILLED_SIGMA_VALUES, guidance_scale=1.0,
-                        generator=torch.Generator("cuda").manual_seed(42), output_type="np", return_dict=False)
-            if c["tipo"] == "i2v":
-                if i2v is None:
-                    try:
-                        from diffusers import LTX2ImageToVideoPipeline
-                        i2v = LTX2ImageToVideoPipeline.from_pipe(pipe)
-                    except Exception as e:  # sem pipeline de imagem: registra e segue
-                        raise RuntimeError(f"image-to-video indisponível nesta versão do diffusers: {e}")
-                args["image"] = load_image(c["imagem"]).resize((c["w"], c["h"]))
-                runner = i2v
-            else:
-                runner = pipe
-            t1 = time.time()
-            def passo(p, i, t, kw, _n=c["nome"]):
-                print(f"[ltx] {_n} passo {i} em {time.time() - t1:.0f} s", flush=True)
-                return kw
+    for tipo, classe in (("t2v", LTX2Pipeline), ("i2v", LTX2ImageToVideoPipeline)):
+        lote = [c for c in cenas if c["tipo"] == tipo]
+        if not lote:
+            continue
+        pipe = carregar(classe)
+        for k, c in enumerate(lote):
             try:
-                video, audio = runner(**args, callback_on_step_end=passo)
-            except TypeError:
-                video, audio = runner(**args)
-            seg = time.time() - t1
-            saida = f"/root/work/{c['nome']}"
-            encode_video(video[0], fps=24, audio=audio[0].float().cpu() if audio is not None else None,
-                         audio_sample_rate=pipe.vocoder.config.output_sampling_rate, output_path=saida)
-            url = enviar(saida, c["nome"])
-            r = {"cena": c["nome"], "segundos_gpu": round(seg, 1), "url": url}
-            resultados.append(r)
-            avisar("clipe", f"{c['nome']}: {seg:.0f} s de GPU para 5 s de vídeo", r, 40 + 20 * (k + 1))
-        except Exception:
-            erro = traceback.format_exc()[-1500:]
-            resultados.append({"cena": c["nome"], "erro": erro})
-            avisar("erro", f"{c['nome']} falhou: {erro}", {"cena": c["nome"]})
+                extra = {"image": load_image(c["imagem"]).convert("RGB").resize((c["w"], c["h"]))} if tipo == "i2v" else {}
+                resultados.append(gerar(pipe, c, k, extra))
+            except Exception:
+                erro = traceback.format_exc()[-1500:]
+                resultados.append({"cena": c["nome"], "erro": erro})
+                avisar("erro", f"{c['nome']} falhou: {erro}", {"cena": c["nome"]})
+        del pipe
+        gc.collect()
+        torch.cuda.empty_cache()
     avisar("fim", "Teste concluído", {"gpu": gpu, "resultados": resultados}, 100)
+    print("Teste concluído", flush=True)
 
 
 if __name__ == "__main__":

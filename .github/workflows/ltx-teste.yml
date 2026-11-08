@@ -26,5 +26,6 @@ jobs:
           FABRICA_URL: ${{ secrets.FABRICA_URL }}
           FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
           PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
-          MAX_MIN: "80"
+          MAX_MIN: "60"
+          CENAS_ATIVAS: "ltx-fala-ptbr-t2v.mp4,ltx-macieira-i2v.mp4"
         run: node ltx/deploy.mjs
