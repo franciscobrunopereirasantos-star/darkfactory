@@ -10,7 +10,7 @@ const gql = async (query) => {
   return j.data;
 };
 const s = (v) => JSON.stringify(String(v ?? ""));
-const env = ["FABRICA_URL", "FABRICA_WORKER_TOKEN", "PEDIDO_ID", "RUNPOD_API_KEY", "HF_TOKEN", "CENAS_ATIVAS", "SCRIPT", "CENAS_CMP"]
+const env = ["FABRICA_URL", "FABRICA_WORKER_TOKEN", "PEDIDO_ID", "RUNPOD_API_KEY", "HF_TOKEN", "CENAS_ATIVAS", "SCRIPT", "CENAS_CMP", "OPENAI_API_KEY"]
   .map((k) => `{ key: ${s(k)}, value: ${s(process.env[k])} }`).join(", ");
 const cmd = "bash -c 'curl -sL https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/pod.sh | bash'";
 const GPUS = ["NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB", "NVIDIA H100 PCIe", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation"];

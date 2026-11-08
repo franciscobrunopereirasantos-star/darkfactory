@@ -13,7 +13,7 @@ concurrency:
 jobs:
   teste:
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,11 +23,12 @@ jobs:
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           FABRICA_URL: ${{ secrets.FABRICA_URL }}
           FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
           PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
-          MAX_MIN: "60"
+          MAX_MIN: "95"
           CENAS_ATIVAS: "ltx-fala-ptbr-t2v.mp4,ltx-macieira-i2v.mp4"
-          SCRIPT: comparativo.py
+          SCRIPT: narrador_teste.py
           CENAS_CMP: "01,09,26,30"
         run: node ltx/deploy.mjs
