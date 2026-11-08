@@ -128,7 +128,7 @@ async function main() {
   const inicio = Date.now();
   let feitos = 0;
   while (feitos < MAX_PEDIDOS && Date.now() - inicio < MAX_MINUTOS * 60_000) {
-    const { pedido, cliente } = await pegarPedido();
+    const { pedido, cliente } = await pegarPedido([...FORMATOS]);
     if (!pedido) {
       log("fila vazia");
       break;

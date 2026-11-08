@@ -19,7 +19,7 @@ async function chamar(caminho, corpo) {
   return json;
 }
 
-export const pegarPedido = () => chamar("pegar");
+export const pegarPedido = (formatos) => chamar("pegar", formatos ? { formatos } : {});
 
 export async function progresso(pedido_id, etapa, pct, mensagem, dados) {
   try {
