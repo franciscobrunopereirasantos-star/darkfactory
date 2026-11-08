@@ -8,7 +8,7 @@ import { gerarVoz } from "./voz.mjs";
 import { gerarBuscas, escolherVisual } from "./visual.mjs";
 import { montar } from "./montagem.mjs";
 import { conferir } from "./conferencia.mjs";
-import { log, duracao } from "./util.mjs";
+import { log, duracao, ffmpeg } from "./util.mjs";
 
 const MAX_MINUTOS = Number(process.env.MAX_MINUTOS || 40);
 const MAX_PEDIDOS = Number(process.env.MAX_PEDIDOS || 20);
@@ -38,6 +38,8 @@ export async function produzir(pedido, cliente) {
   const vertical = aspecto === "9:16";
   const voz = entrada.voz || cliente?.voz_padrao || "openai:onyx";
   const marca = cliente?.marca || {};
+  // Velocidade da fala: padrão 1.2 no short (ritmo de TikTok) e 1.1 no vídeo longo; o pedido pode mandar "velocidade".
+  const velocidade = Math.min(1.5, Math.max(0.8, Number(entrada.velocidade) || (vertical ? 1.2 : 1.1)));
   const cenasEntrada = (roteiro.cenas || []).filter((c) => c && c.texto && c.texto.trim());
   if (!cenasEntrada.length) throw new Error("roteiro sem cenas");
 
@@ -60,6 +62,12 @@ export async function produzir(pedido, cliente) {
     await emParalelo(cenas, 4, async (c, i) => {
       const v = await gerarVoz(c.texto, voz, path.join(pasta, `voz${i}.mp3`));
       c.audio = v.arquivo;
+      // Acelera a fala sem mudar o tom (a voz da OpenAI sai ~20% mais lenta que a do Pictory).
+      if (velocidade !== 1) {
+        const rapido = path.join(pasta, `voz${i}-r.wav`);
+        await ffmpeg(["-i", c.audio, "-filter:a", `atempo=${velocidade}`, "-ar", "44100", rapido]);
+        c.audio = rapido;
+      }
       custo += v.custo_usd;
     });
     await progresso(pedido.id, "voz", 30, "Voz pronta");

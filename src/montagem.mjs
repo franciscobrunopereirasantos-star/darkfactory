@@ -7,7 +7,7 @@ import { ffmpeg, duracao } from "./util.mjs";
 const FONTES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fonts");
 const FONTE = path.join(FONTES, "Inter-Bold.otf");
 const FPS = 30;
-const PAUSA = 0.25; // respiro entre cenas
+const PAUSA = 0.15; // respiro entre cenas
 
 export const dimensoes = (aspecto) => (aspecto === "16:9" ? { W: 1920, H: 1080 } : { W: 1080, H: 1920 });
 
