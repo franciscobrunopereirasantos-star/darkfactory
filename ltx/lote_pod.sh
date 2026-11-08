@@ -36,7 +36,7 @@ aviso "ambiente" "Python pronto ($(python -c 'import torch;print(torch.__version
 
 export HF_HUB_ENABLE_HF_TRANSFER=1
 if [ ! -f $BASE/ltx/.ok ]; then
-  aviso "baixando" "Baixando os pesos do LTX-2.5 para o volume (só na 1ª vez)"
+  aviso "baixando" "Baixando os pesos do LTX-2.5 $([ $BASE = /workspace ] && echo "para o volume (só na 1ª vez)" || echo "(sem volume)")"
   python - <<'PY'
 import os
 from huggingface_hub import snapshot_download
