@@ -3,8 +3,8 @@ import fs from "node:fs";
 import { ffprobeJson, ffmpegAnalise } from "./util.mjs";
 import { dimensoes } from "./montagem.mjs";
 
-export async function conferir(arquivo, { aspecto = "9:16", duracaoEsperada, tempos = [] }) {
-  const { W, H } = dimensoes(aspecto);
+export async function conferir(arquivo, { aspecto = "9:16", duracaoEsperada, tempos = [], dims, maxMB = 100, paradoPermitido = null, rotulo = "" }) {
+  const { W, H } = dims || dimensoes(aspecto);
   const info = await ffprobeJson(arquivo);
   const v = info.streams.find((s) => s.codec_type === "video");
   const a = info.streams.find((s) => s.codec_type === "audio");
@@ -20,7 +20,7 @@ export async function conferir(arquivo, { aspecto = "9:16", duracaoEsperada, tem
     dur >= 5 && dur <= 600 && (!duracaoEsperada || Math.abs(dur - duracaoEsperada) < 1.5),
     `${dur.toFixed(1)} s${duracaoEsperada ? ` (esperado ${duracaoEsperada.toFixed(1)} s)` : ""}`,
   );
-  add("tamanho", bytes < 100 * 1024 * 1024, `${(bytes / 1048576).toFixed(1)} MB`);
+  add("tamanho", bytes < maxMB * 1024 * 1024, `${(bytes / 1048576).toFixed(1)} MB (máx. ${maxMB} MB)`);
 
   const cenaEm = (s) => tempos.find((x) => s >= x.inicio && s < x.fim)?.cena;
 
@@ -44,9 +44,30 @@ export async function conferir(arquivo, { aspecto = "9:16", duracaoEsperada, tem
     pretos.length ? pretos.map((p) => `${(p.fim - p.inicio).toFixed(1)} s na cena ${cenaEm(p.inicio) ?? "?"}`).join("; ") : "ok",
   );
 
+  // quadro parado por mais de 1 s fora dos trechos planejados (cartelas e congelamentos)
+  if (paradoPermitido) {
+    const fr = await ffmpegAnalise(["-i", arquivo, "-vf", "freezedetect=n=0.001:d=1", "-an", "-f", "null", "-"]);
+    const inicios = [...fr.matchAll(/freeze_start: ([\d.]+)/g)].map((m) => Number(m[1]));
+    const fins = [...fr.matchAll(/freeze_end: ([\d.]+)/g)].map((m) => Number(m[1]));
+    const parados = inicios
+      .map((ini, k) => ({ inicio: ini, fim: fins[k] ?? dur }))
+      .filter((p) => {
+        // desconta a parte que cai dentro de trechos planejados (com folga de 0,4 s por causa dos fades)
+        let livre = p.fim - p.inicio;
+        for (const j of paradoPermitido) livre -= Math.max(0, Math.min(p.fim, j.fim + 0.4) - Math.max(p.inicio, j.inicio - 0.4));
+        return livre > 1;
+      });
+    add(
+      "sem_quadro_parado",
+      parados.length === 0,
+      parados.length ? parados.map((p) => `${(p.fim - p.inicio).toFixed(1)} s na cena ${cenaEm(p.inicio) ?? "?"}`).join("; ") : "ok",
+    );
+  }
+
+  if (rotulo) for (const r of regras) r.regra = `${rotulo}${r.regra}`;
   const falhas = regras.filter((r) => !r.ok);
   // Problema técnico grave (sem áudio/formato/duração) => falhou; o resto => revisar.
-  const graves = falhas.filter((r) => ["formato", "tem_audio", "duracao", "tamanho"].includes(r.regra));
+  const graves = falhas.filter((r) => ["formato", "tem_audio", "duracao", "tamanho"].includes(r.regra.slice(rotulo.length)));
   const status = graves.length ? "falhou" : falhas.length ? "revisar" : "pronto";
   return {
     status,

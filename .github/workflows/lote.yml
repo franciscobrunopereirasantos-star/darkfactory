@@ -1,0 +1,35 @@
+name: Fábrica — lote semanal (GPU)
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # confere a cada 30 min se há lote fechado pronto para começar
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [novo-lote]
+
+concurrency:
+  group: fabrica-lote
+  cancel-in-progress: false
+
+jobs:
+  lote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+      - name: Produzir o lote
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          VOLUME_DC: US-IL-1
+        run: node src/lote.mjs
