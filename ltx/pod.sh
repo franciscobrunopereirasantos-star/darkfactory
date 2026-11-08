@@ -26,7 +26,20 @@ pip install -q "git+https://github.com/huggingface/diffusers" transformers accel
 export HF_HUB_ENABLE_HF_TRANSFER=1
 aviso "baixando" 15 "Baixando os pesos oficiais Lightricks/LTX-2.5-Diffusers (~72 GB)"
 T0=$(date +%s)
-hf download Lightricks/LTX-2.5-Diffusers --exclude "transformer_full/*" --local-dir /root/work/ltx 2>&1 | tail -2
+python - <<'PY' 2>&1 | tail -5
+import os, sys
+from huggingface_hub import snapshot_download
+try:
+    snapshot_download("Lightricks/LTX-2.5-Diffusers", local_dir="/root/work/ltx", token=os.environ.get("HF_TOKEN") or None,
+                      ignore_patterns=["transformer_full/*"])
+except Exception as e:
+    open("/root/work/erro_download.txt", "w").write(str(e)[:600])
+    sys.exit(1)
+PY
+if [ -f /root/work/erro_download.txt ]; then
+  aviso "erro" 15 "Download recusado pelo Hugging Face: $(tr -d '\n"' < /root/work/erro_download.txt | cut -c1-400)"
+  exit 1
+fi
 aviso "baixou" 35 "Download em $(( $(date +%s) - T0 )) s"
 curl -sL "https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/teste.py" -o teste.py
 python teste.py 2>&1 | tail -40

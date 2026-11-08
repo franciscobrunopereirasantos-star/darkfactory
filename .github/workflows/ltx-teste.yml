@@ -22,6 +22,7 @@ jobs:
       - name: Ligar GPU, testar e desligar
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           FABRICA_URL: ${{ secrets.FABRICA_URL }}
           FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
           PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
