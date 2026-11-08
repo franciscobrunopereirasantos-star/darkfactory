@@ -29,5 +29,5 @@ jobs:
           MAX_MIN: "60"
           CENAS_ATIVAS: "ltx-fala-ptbr-t2v.mp4,ltx-macieira-i2v.mp4"
           SCRIPT: comparativo.py
-          CENAS_CMP: "17"
+          CENAS_CMP: "01,09,26,30"
         run: node ltx/deploy.mjs
