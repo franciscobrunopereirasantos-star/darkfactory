@@ -28,4 +28,6 @@ jobs:
           PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
           MAX_MIN: "60"
           CENAS_ATIVAS: "ltx-fala-ptbr-t2v.mp4,ltx-macieira-i2v.mp4"
+          SCRIPT: comparativo.py
+          CENAS_CMP: "17"
         run: node ltx/deploy.mjs

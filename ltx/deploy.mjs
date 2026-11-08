@@ -10,7 +10,7 @@ const gql = async (query) => {
   return j.data;
 };
 const s = (v) => JSON.stringify(String(v ?? ""));
-const env = ["FABRICA_URL", "FABRICA_WORKER_TOKEN", "PEDIDO_ID", "RUNPOD_API_KEY", "HF_TOKEN", "CENAS_ATIVAS"]
+const env = ["FABRICA_URL", "FABRICA_WORKER_TOKEN", "PEDIDO_ID", "RUNPOD_API_KEY", "HF_TOKEN", "CENAS_ATIVAS", "SCRIPT", "CENAS_CMP"]
   .map((k) => `{ key: ${s(k)}, value: ${s(process.env[k])} }`).join(", ");
 const cmd = "bash -c 'curl -sL https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/pod.sh | bash'";
 const GPUS = ["NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB", "NVIDIA H100 PCIe", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation"];
@@ -24,7 +24,7 @@ for (const gpu of GPUS) {
       containerDiskInGb: 180, volumeInGb: 0, minVcpuCount: 8, minMemoryInGb: 110,
       dockerArgs: ${s(cmd)}, ports: "", env: [${env}] }) { id costPerHr machine { gpuDisplayName } } }`);
     pod = d.podFindAndDeployOnDemand;
-    if (pod?.id) { console.log(`GPU ligada: ${gpu} (US$ ${pod.costPerHr}/h) pod ${pod.id}`); break; }
+    if (pod?.id) { console.log(`GPU ligada: ${gpu} (US$ ${pod.costPerHr}/h) pod ${pod.id} em ${new Date().toISOString()}`); break; }
   } catch (e) { console.log(`${gpu}: indisponível (${e.message.slice(0, 160)})`); }
 }
 if (!pod?.id) { console.log("Nenhuma GPU disponível agora."); process.exit(1); }

@@ -1,6 +1,8 @@
 #!/bin/bash
 # Roda dentro da GPU do RunPod: instala, baixa o LTX-2.5 oficial, testa e desliga a própria GPU no final.
 set -x
+export INICIO_POD=$(date +%s)
+SCRIPT=${SCRIPT:-teste.py}
 desligar() {
   echo "[ltx] desligando a GPU"
   curl -s -X POST "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" -H 'content-type: application/json' \
@@ -41,7 +43,7 @@ if [ -f /root/work/erro_download.txt ]; then
   exit 1
 fi
 aviso "baixou" 35 "Download em $(( $(date +%s) - T0 )) s"
-curl -sL "https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/teste.py" -o teste.py
+curl -sL "https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/${SCRIPT}" -o teste.py
 aviso "memoria" 38 "RAM livre: $(free -g | awk '/Mem:/{print $7}') GB de $(free -g | awk '/Mem:/{print $2}') GB"
 python -u teste.py > teste.log 2>&1
 CODIGO=$?
