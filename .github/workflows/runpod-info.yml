@@ -1,0 +1,19 @@
+name: RunPod — consulta
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "script em ltx/"
+        default: "runpod-info.mjs"
+jobs:
+  info:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          VOLUME_DC: ${{ vars.VOLUME_DC }}
+        run: node ltx/${{ inputs.script }}
