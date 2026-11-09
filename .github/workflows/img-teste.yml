@@ -26,5 +26,5 @@ jobs:
           MAX_MIN: "55"
           MIN_RAM: "60"
           POD_SCRIPT: img_pod.sh
-          GPUS: "NVIDIA L40S,NVIDIA RTX 6000 Ada Generation,NVIDIA A100 80GB PCIe"
+          GPUS: "NVIDIA L40S,NVIDIA RTX 6000 Ada Generation,NVIDIA A100 80GB PCIe,NVIDIA A100-SXM4-80GB,NVIDIA L40,NVIDIA RTX A6000,NVIDIA A40,NVIDIA H100 PCIe"
         run: node ltx/deploy.mjs
