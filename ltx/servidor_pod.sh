@@ -33,7 +33,7 @@ if [ ! -f $BASE/venv/.ok ]; then
   . $BASE/venv/bin/activate
   pip install -q -U pip
   pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cu126 2>&1 | tail -2
-  pip install -q "git+https://github.com/huggingface/diffusers" transformers accelerate sentencepiece \
+  pip install -q "git+https://github.com/huggingface/diffusers" transformers accelerate sentencepiece peft \
     "huggingface_hub[cli,hf_transfer]" imageio imageio-ffmpeg av kernels pillow 2>&1 | tail -3
   python -c "import torch; assert torch.cuda.is_available()" && touch $BASE/venv/.ok
 else

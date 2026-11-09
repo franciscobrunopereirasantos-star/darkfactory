@@ -7,6 +7,9 @@ import torch
 BASE = os.environ["FABRICA_URL"].rstrip("/")
 TOKEN = os.environ["FABRICA_WORKER_TOKEN"]
 MODELO = os.environ.get("LTX_DIR", "/workspace/ltx")
+QWEN_DIR = os.environ.get("QWEN_DIR", os.path.join(os.path.dirname(MODELO.rstrip("/")), "qwen"))
+QWEN_REPO = "Qwen/Qwen-Image-Edit-2509"
+LIGHTNING = ("lightx2v/Qwen-Image-Lightning", "Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors")
 POD = os.environ.get("RUNPOD_POD_ID", "")
 CUSTO_HORA = float(os.environ.get("CUSTO_HORA", "0") or 0)
 OCIOSA_MIN = float(os.environ.get("GPU_OCIOSA_MIN", "10"))
@@ -61,19 +64,22 @@ def tamanho_ltx(w, h):
 
 
 class Motor:
-    """Mantém um pipeline carregado (image-to-video ou text-to-video) e troca quando precisa."""
+    """Mantém um pipeline carregado (LTX image-to-video, text-to-video ou Qwen de imagem) e troca quando precisa."""
 
     def __init__(self):
-        self.pipe, self.tipo, self.modo = None, None, "bf16"
+        self.pipe, self.tipo, self.modo, self.lightning = None, None, "bf16", False
         self.vram = torch.cuda.get_device_properties(0).total_memory / 2**30
 
     def carregar(self, tipo):
         if self.tipo == tipo:
             return
-        from diffusers import LTX2ImageToVideoPipeline, LTX2Pipeline
         if self.pipe is not None:
             del self.pipe
+            self.pipe, self.tipo = None, None
             torch.cuda.empty_cache()
+        if tipo == "qwen":
+            return self.carregar_qwen()
+        from diffusers import LTX2ImageToVideoPipeline, LTX2Pipeline
         cls = LTX2ImageToVideoPipeline if tipo == "i2v" else LTX2Pipeline
         try:
             self.pipe = cls.from_pretrained(MODELO, dtype=torch.bfloat16)
@@ -90,6 +96,31 @@ class Motor:
         if hasattr(self.pipe.vae, "enable_tiling"):
             self.pipe.vae.enable_tiling()
         self.tipo = tipo
+
+    def carregar_qwen(self):
+        from diffusers import QwenImageEditPlusPipeline
+        if not os.path.isfile(os.path.join(QWEN_DIR, ".ok")):
+            from huggingface_hub import snapshot_download
+            t = time.time()
+            snapshot_download(QWEN_REPO, local_dir=QWEN_DIR, token=os.environ.get("HF_TOKEN") or None)
+            open(os.path.join(QWEN_DIR, ".ok"), "w").write("ok")
+            print(f"[servidor] pesos do Qwen baixados em {time.time() - t:.0f} s", flush=True)
+        self.pipe = QwenImageEditPlusPipeline.from_pretrained(QWEN_DIR, torch_dtype=torch.bfloat16)
+        self.modo = "bf16"
+        if self.vram < 70:
+            try:
+                self.pipe.transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=torch.bfloat16)
+                self.modo = "fp8-armazenamento"
+            except Exception as e:  # noqa
+                print("[servidor] layerwise casting indisponível (qwen):", e, flush=True)
+        self.pipe.enable_model_cpu_offload()
+        self.lightning = False
+        try:
+            self.pipe.load_lora_weights(LIGHTNING[0], weight_name=LIGHTNING[1])
+            self.lightning = True
+        except Exception as e:  # noqa
+            print("[servidor] Lightning indisponível:", e, flush=True)
+        self.tipo = "qwen"
 
     def sequencial(self):
         if self.modo.startswith("sequencial"):
@@ -155,6 +186,50 @@ def gerar_clipe(motor, job):
             "modo": motor.modo, "seed": seed}, gpu_s
 
 
+def baixar_imagem(url):
+    from PIL import Image
+    import io
+    req = urllib.request.Request(url, headers={"user-agent": "darkfactory-gpu"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return Image.open(io.BytesIO(r.read())).convert("RGB")
+
+
+def gerar_imagem(motor, job):
+    e = job.get("entrada") or {}
+    largura = int(e.get("largura") or 1376)
+    altura = int(e.get("altura") or 768)
+    largura, altura = max(256, largura // 16 * 16), max(256, altura // 16 * 16)
+    seed = int(e.get("seed") or 42)
+    motor.carregar("qwen")
+    passos = int(e.get("passos") or (8 if motor.lightning else 40))
+    rapido = motor.lightning and passos <= 12
+    if motor.lightning:
+        (motor.pipe.enable_lora if rapido else motor.pipe.disable_lora)()
+    refs = [baixar_imagem(u) for u in (e.get("referencias_url") or [])][:3]
+    prompt = (e.get("prompt") or "").strip()
+    if refs:
+        prompt = ("Keep the exact faces, hair and outfits of the characters in the reference image(s). " + prompt)
+    if e.get("estilo"):
+        prompt += f" Style: {e['estilo']}."
+    kw = dict(prompt=prompt, width=largura, height=altura, num_inference_steps=passos,
+              true_cfg_scale=1.0 if rapido else 4.0, negative_prompt=" ",
+              generator=torch.Generator("cuda").manual_seed(seed))
+    if refs:
+        kw["image"] = refs
+    t1 = time.time()
+    img = motor.pipe(**kw).images[0]
+    gpu_s = time.time() - t1
+    arq = f"/root/imagem-{job['id']}.png"
+    img.save(arq)
+    url = enviar(job["id"], arq, "imagem.png", "image/png")
+    try:
+        os.remove(arq)
+    except OSError:
+        pass
+    return {"url": url, "largura": img.width, "altura": img.height, "modelo": "qwen-image-edit-2509",
+            "passos": passos, "seed": seed, "modo": motor.modo}, gpu_s
+
+
 def main():
     estado["gpu"] = torch.cuda.get_device_name(0)
     threading.Thread(target=batimento, daemon=True).start()
@@ -168,7 +243,7 @@ def main():
     ociosa_desde = time.time()
     while True:
         try:
-            r = api("jobs/pegar", {"tipos": ["clipe"], "gpu": estado["gpu"], "pod_id": POD})
+            r = api("jobs/pegar", {"tipos": ["clipe", "imagem_gpu"], "gpu": estado["gpu"], "pod_id": POD})
         except Exception as e:  # noqa
             print("[servidor] pegar falhou:", e, flush=True)
             r = {}
@@ -185,7 +260,10 @@ def main():
         estado["estado"] = "ligada"
         try:
             progresso(job["id"], f"gerando na {estado['gpu']}")
-            resultado, gpu_s = gerar_clipe(motor, job)
+            if job.get("tipo") == "imagem_gpu":
+                resultado, gpu_s = gerar_imagem(motor, job)
+            else:
+                resultado, gpu_s = gerar_clipe(motor, job)
             api("jobs/concluir", {"job_id": job["id"], "status": "pronto", "resultado": resultado,
                                   "segundos_gpu": round(gpu_s, 1), "gpu": estado["gpu"],
                                   "custo_usd": round(gpu_s / 3600 * CUSTO_HORA, 4)})
