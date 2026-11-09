@@ -86,7 +86,7 @@ async function main() {
   let gpu = null, minutos = 0, custoGpu = 0;
   if (jobs.length) {
     let volume = null;
-    try { volume = await garantirVolume(); } catch (e) { log("volume de rede indisponível, segue sem:", e.message); }
+    if (process.env.USAR_VOLUME === "1") { try { volume = await garantirVolume(); } catch (e) { log("volume de rede indisponível, segue sem:", e.message); } }
     const JOBS_GZ = zlib.gzipSync(Buffer.from(JSON.stringify(jobs))).toString("base64");
     const pod = await ligarPod({
       nome: `lote-${lote.ref}`.slice(0, 60),

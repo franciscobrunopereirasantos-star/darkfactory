@@ -11,7 +11,7 @@ async function main() {
   const ativo = (d.myself?.pods || []).find((p) => p.name === NOME && p.desiredStatus === "RUNNING");
   if (ativo) { log(`servidor de GPU já está ligado (pod ${ativo.id})`); return; }
   let volume = null;
-  try { volume = await garantirVolume(); } catch (e) { log("volume de rede indisponível, segue sem:", e.message); }
+  if (process.env.USAR_VOLUME === "1") { try { volume = await garantirVolume(); } catch (e) { log("volume de rede indisponível, segue sem:", e.message); } }
   const pod = await ligarPod({
     nome: NOME,
     cmd: "bash -c 'curl -sL https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/servidor_pod.sh | bash'",
