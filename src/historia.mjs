@@ -60,7 +60,7 @@ export async function prepararHistoria(pedido, pasta) {
     const durClipe = tipo === "clipe" ? Math.min(CLIPE_MAX, Math.max(CLIPE_MIN, precisa)) : 0;
     const durCena = tipo === "clipe" ? Math.max(durClipe, precisa) : falas.length ? Math.max(3, precisa) : 3;
     plano.push({ id: String(c.id), n: nCena(c, i), tipo, falas, durClipe, durCena, congelado: Math.max(0, durCena - durClipe),
-      imagem_url: c.imagem_url, prompt: c.prompt_movimento, texto_cartela: c.texto_cartela });
+      imagem_url: c.imagem_url, prompt: c.prompt_movimento, texto_cartela: c.texto_cartela, clipe_url: c.clipe_url, clipePronto: !!c.clipe_url });
   }
   return { plano, custo_voz: custo };
 }
@@ -212,8 +212,16 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
       const arq = clipes.get(c.id);
       if (!arq) throw new Error(`cena ${c.id}: clipe não foi gerado pela GPU`);
       const real = await duracao(arq);
+      // Clipe gerado antes (API de geração) pode ter duração prevista por estimativa: com até 1 s de
+      // diferença, a cena se ajusta ao clipe real (mais curto → congela o fim; mais longo → a cena cresce).
+      const previsto = c.durClipe;
+      if (c.clipePronto && Math.abs(real - previsto) <= 1) {
+        c.durClipe = Math.min(real, CLIPE_MAX + 0.5);
+        c.durCena = Math.max(c.durCena, c.durClipe);
+        c.congelado = Math.max(0, c.durCena - c.durClipe);
+      }
       const ok = Math.abs(real - c.durClipe) <= 0.15;
-      regras.push({ regra: `clipe_duracao_cena_${c.id}`, ok, detalhe: `${real.toFixed(2)} s (previsto ${c.durClipe.toFixed(2)} s)` });
+      regras.push({ regra: `clipe_duracao_cena_${c.id}`, ok, detalhe: `${real.toFixed(2)} s (previsto ${previsto.toFixed(2)} s)` });
       seg = await segmentoClipe(arq, c, pasta, nome);
       if (c.congelado > 0.05) parados.push({ inicio: t + c.durClipe, fim: t + c.durCena });
     }

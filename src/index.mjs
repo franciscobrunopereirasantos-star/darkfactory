@@ -8,11 +8,12 @@ import { gerarVoz } from "./voz.mjs";
 import { gerarBuscas, escolherVisual } from "./visual.mjs";
 import { montar } from "./montagem.mjs";
 import { conferir } from "./conferencia.mjs";
-import { log, duracao, ffmpeg } from "./util.mjs";
+import { log, duracao, ffmpeg, baixar } from "./util.mjs";
+import { prepararHistoria, montarHistoria } from "./historia.mjs";
 
 const MAX_MINUTOS = Number(process.env.MAX_MINUTOS || 40);
 const MAX_PEDIDOS = Number(process.env.MAX_PEDIDOS || 20);
-const FORMATOS = new Set(["short_narrado", "video_narrado"]);
+const FORMATOS = new Set(["short_narrado", "video_narrado", "historia_ilustrada"]);
 
 // Executa tarefas com no máximo N ao mesmo tempo, mantendo a ordem do resultado.
 async function emParalelo(itens, n, fn) {
@@ -29,7 +30,32 @@ async function emParalelo(itens, n, fn) {
   return saida;
 }
 
+// historia_ilustrada na fila normal: só quando todas as cenas de clipe já vêm com clipe_url
+// (API de geração / df_criar_video). Sem clipe pronto, a história precisa do lote (GPU).
+async function produzirHistoriaPronta(pedido) {
+  const cenas = pedido.entrada?.cenas || [];
+  const semClipe = cenas.filter((c) => c.tipo !== "cartela" && !c.clipe_url).map((c) => c.id);
+  if (semClipe.length) throw new Error(`historia_ilustrada sem clipe pronto nas cenas ${semClipe.join(", ")}: use um lote ou df_criar_video`);
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), `hist-${pedido.id.slice(0, 8)}-`));
+  try {
+    await progresso(pedido.id, "voz", 10, "Baixando vozes e clipes prontos");
+    const { plano, custo_voz } = await prepararHistoria(pedido, pasta);
+    const clipes = new Map();
+    for (const c of plano.filter((x) => x.tipo === "clipe")) {
+      const arq = path.join(pasta, `pronto-${String(c.id).replace(/[^a-zA-Z0-9_-]/g, "_")}.mp4`);
+      await baixar(c.clipe_url, arq);
+      clipes.set(c.id, arq);
+    }
+    const r = await montarHistoria(pedido, plano, clipes, pasta);
+    r.custo_usd = Math.round(custo_voz * 10000) / 10000;
+    return r;
+  } finally {
+    fs.rmSync(pasta, { recursive: true, force: true });
+  }
+}
+
 export async function produzir(pedido, cliente) {
+  if ((pedido.formato || pedido.entrada?.formato) === "historia_ilustrada") return produzirHistoriaPronta(pedido);
   const entrada = pedido.entrada || {};
   const roteiro = entrada.roteiro || entrada;
   const formato = pedido.formato || entrada.formato;

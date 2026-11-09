@@ -1,0 +1,28 @@
+name: Fábrica — ligar GPU (API de geração)
+
+on:
+  repository_dispatch:
+    types: [ligar-gpu]
+  workflow_dispatch: {}
+
+concurrency:
+  group: fabrica-gpu-ligar
+  cancel-in-progress: false
+
+jobs:
+  ligar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ligar o servidor de clipes
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          VOLUME_DC: US-IL-1
+        run: node src/gpu.mjs
