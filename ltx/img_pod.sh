@@ -17,7 +17,7 @@ aviso() {
 }
 aviso "img_instalando" 5 "GPU ligada: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader); US\$ ${CUSTO_HORA}/h"
 mkdir -p /root/work && cd /root/work
-pip install -q -U torch torchvision --index-url https://download.pytorch.org/whl/cu126 2>&1 | tail -2
+pip uninstall -y -q torchaudio 2>/dev/null; pip install -q -U torch torchvision --index-url https://download.pytorch.org/whl/cu126 2>&1 | tail -2
 pip install -q "git+https://github.com/huggingface/diffusers" transformers accelerate sentencepiece peft \
   "huggingface_hub[cli,hf_transfer]" pillow 2>&1 | tail -3
 export HF_HUB_ENABLE_HF_TRANSFER=1
