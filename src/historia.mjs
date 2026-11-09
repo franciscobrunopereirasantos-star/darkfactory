@@ -290,7 +290,9 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
       await codificar(vert, smix, sass, shortFinal, 60);
       confShort = await conferir(shortFinal, { dims: { W: 1080, H: 1920 }, duracaoEsperada: corpo + fim, maxMB: 60, rotulo: "short_" });
       const ds = confShort.resultado.duracao_seg;
-      confShort.regras.push({ regra: "short_duracao_45_60", ok: ds >= 45 && ds <= 60.5, detalhe: `${ds} s` });
+      // 45–60 s; se as cenas escolhidas somam menos que isso, basta usar todas (+ cartela final).
+      const minimo = Math.min(45, corpo + fim - 0.5);
+      confShort.regras.push({ regra: "short_duracao_45_60", ok: ds >= minimo && ds <= 60.5, detalhe: `${ds} s (mínimo ${minimo.toFixed(1)} s)` });
       regras.push(...confShort.regras);
       if (!confShort.regras.some((r) => !r.ok && /formato|tem_audio|tamanho/.test(r.regra)))
         shortUrl = await enviarArquivo(pedido.id, "short.mp4", shortFinal);
