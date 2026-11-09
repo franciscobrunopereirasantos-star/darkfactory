@@ -9,6 +9,7 @@ const gql = async (query) => {
 const tentativas = {
   datacenters: `query { dataCenters { id name location storageSupport listed gpuAvailability { gpuTypeId stockStatus available } } }`,
   volumes: `query { myself { networkVolumes { id name size dataCenterId } } }`,
+  pods: `query { myself { pods { id name desiredStatus costPerHr } } }`,
   gpus: `query { gpuTypes { id displayName memoryInGb secureCloud communityCloud lowestPrice(input: {gpuCount: 1}) { minimumBidPrice uninterruptablePrice stockStatus } } }`,
 };
 for (const [nome, q] of Object.entries(tentativas)) {
