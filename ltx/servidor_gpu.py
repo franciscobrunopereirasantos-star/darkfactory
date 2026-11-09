@@ -106,6 +106,15 @@ class Motor:
             open(os.path.join(QWEN_DIR, ".ok"), "w").write("ok")
             print(f"[servidor] pesos do Qwen baixados em {time.time() - t:.0f} s", flush=True)
         self.pipe = QwenImageEditPlusPipeline.from_pretrained(QWEN_DIR, torch_dtype=torch.bfloat16)
+        self.lightning = False
+        try:
+            # atalho Lightning (8 passos) fundido nos pesos antes do fp8: LoRA solto quebra com layerwise casting
+            self.pipe.load_lora_weights(LIGHTNING[0], weight_name=LIGHTNING[1])
+            self.pipe.fuse_lora()
+            self.pipe.unload_lora_weights()
+            self.lightning = True
+        except Exception as e:  # noqa
+            print("[servidor] Lightning indisponível:", e, flush=True)
         self.modo = "bf16"
         if self.vram < 70:
             try:
@@ -114,12 +123,6 @@ class Motor:
             except Exception as e:  # noqa
                 print("[servidor] layerwise casting indisponível (qwen):", e, flush=True)
         self.pipe.enable_model_cpu_offload()
-        self.lightning = False
-        try:
-            self.pipe.load_lora_weights(LIGHTNING[0], weight_name=LIGHTNING[1])
-            self.lightning = True
-        except Exception as e:  # noqa
-            print("[servidor] Lightning indisponível:", e, flush=True)
         self.tipo = "qwen"
 
     def sequencial(self):
@@ -202,9 +205,7 @@ def gerar_imagem(motor, job):
     seed = int(e.get("seed") or 42)
     motor.carregar("qwen")
     passos = int(e.get("passos") or (8 if motor.lightning else 40))
-    rapido = motor.lightning and passos <= 12
-    if motor.lightning:
-        (motor.pipe.enable_lora if rapido else motor.pipe.disable_lora)()
+    rapido = motor.lightning
     refs = [baixar_imagem(u) for u in (e.get("referencias_url") or [])][:3]
     prompt = (e.get("prompt") or "").strip()
     if refs:

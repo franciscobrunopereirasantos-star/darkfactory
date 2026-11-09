@@ -69,6 +69,16 @@ def main():
     vram = torch.cuda.get_device_properties(0).total_memory / 2**30
     t0 = time.time()
     pipe = QwenImageEditPlusPipeline.from_pretrained(MODELO, torch_dtype=torch.bfloat16)
+    lightning = False
+    try:
+        # funde o atalho Lightning nos pesos ANTES do fp8 (LoRA solto não funciona com layerwise casting)
+        pipe.load_lora_weights("lightx2v/Qwen-Image-Lightning",
+                               weight_name="Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors")
+        pipe.fuse_lora()
+        pipe.unload_lora_weights()
+        lightning = True
+    except Exception as e:  # noqa
+        avisar("lora", f"Lightning não carregou ({str(e)[:300]})", pct=40)
     modo = "bf16"
     if vram < 70:
         try:
@@ -77,13 +87,6 @@ def main():
         except Exception as e:  # noqa
             print("[img] layerwise casting indisponível:", e, flush=True)
     pipe.enable_model_cpu_offload()
-    lightning = False
-    try:
-        pipe.load_lora_weights("lightx2v/Qwen-Image-Lightning",
-                               weight_name="Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors")
-        lightning = True
-    except Exception as e:  # noqa
-        avisar("lora", f"Lightning não carregou ({str(e)[:300]}); seguindo só com 40 passos", pct=40)
     carga = time.time() - t0
     avisar("carregado", f"Qwen-Image-Edit-2509 carregado em {carga:.0f} s na {gpu} ({modo}, Lightning={lightning})",
            {"gpu": gpu, "carga_s": round(carga), "modo": modo}, pct=45)
@@ -91,15 +94,8 @@ def main():
     refs = {u: baixar(u) for u in (VIGIA, MENINA)}
     resultados = []
     rodadas = [(c, 8 if lightning else 40, lightning) for c in CENAS]
-    if lightning:
-        rodadas.append((CENAS[2], 40, False))
     for (nome, urls, prompt), passos, com_lora in rodadas:
         try:
-            if lightning:
-                if com_lora:
-                    pipe.enable_lora()
-                else:
-                    pipe.disable_lora()
             kw = dict(image=[refs[u] for u in urls], prompt=prompt + "Style: " + ESTILO, width=W, height=H,
                       num_inference_steps=passos, true_cfg_scale=1.0 if com_lora else 4.0,
                       negative_prompt=" ", generator=torch.Generator("cuda").manual_seed(42))
