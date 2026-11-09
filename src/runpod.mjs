@@ -24,6 +24,10 @@ export const GPUS = [
   { id: "NVIDIA A100 80GB PCIe", preco: 1.64, sps: 20 },
   { id: "NVIDIA A100-SXM4-80GB", preco: 1.74, sps: 18 },
   { id: "NVIDIA H100 PCIe", preco: 2.39, sps: 14 },
+  // 48 GB mais antigas/baratas: só entram se as de cima estiverem esgotadas (sps é chute, mais lentas)
+  { id: "NVIDIA L40", preco: 0.99, sps: 26 },
+  { id: "NVIDIA RTX A6000", preco: 0.49, sps: 40 },
+  { id: "NVIDIA A40", preco: 0.44, sps: 42 },
 ];
 export const BOOT_COM_VOLUME_S = 300; // ligar + instalar + carregar com pesos no volume
 export const BOOT_SEM_VOLUME_S = 1000; // baixar 72 GB do Hugging Face
@@ -45,14 +49,16 @@ export async function garantirVolume() {
 /** Liga um pod que roda `cmd`. Tenta primeiro no datacenter do volume; se não houver GPU lá, liga sem volume. */
 export async function ligarPod({ nome, cmd, env, volume }) {
   const envs = Object.entries(env).map(([k, v]) => `{ key: ${s(k)}, value: ${s(v)} }`).join(", ");
-  const base = `cloudType: SECURE, gpuCount: 1, name: ${s(nome)}, imageName: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
-    containerDiskInGb: 180, minVcpuCount: 8, minMemoryInGb: 90, dockerArgs: ${s(cmd)}, ports: "", env: [${envs}, { key: "COM_VOLUME", value: "__VOL__" }]`;
+  const base = `cloudType: __NUVEM__, gpuCount: 1, name: ${s(nome)}, imageName: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+    containerDiskInGb: 180, minVcpuCount: 8, minMemoryInGb: 60, dockerArgs: ${s(cmd)}, ports: "", env: [${envs}, { key: "COM_VOLUME", value: "__VOL__" }]`;
   const tentativas = [];
   if (volume) for (const g of GPUS) tentativas.push({ g, extra: `, networkVolumeId: ${s(volume.id)}, volumeMountPath: "/workspace", dataCenterId: ${s(volume.dataCenterId)}`, vol: "1" });
   for (const g of GPUS) tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0" });
+  // último recurso: nuvem comunitária (mais barata, menos garantida), sem volume
+  for (const g of GPUS) tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0", nuvem: "COMMUNITY" });
   for (const t of tentativas) {
     try {
-      const q = `mutation { podFindAndDeployOnDemand(input: { ${base.replace("__VOL__", t.vol)}, gpuTypeId: ${s(t.g.id)}${t.extra} }) { id costPerHr machine { gpuDisplayName } } }`;
+      const q = `mutation { podFindAndDeployOnDemand(input: { ${base.replace("__VOL__", t.vol).replace("__NUVEM__", t.nuvem || "SECURE")}, gpuTypeId: ${s(t.g.id)}${t.extra} }) { id costPerHr machine { gpuDisplayName } } }`;
       const d = await gql(q);
       const p = d.podFindAndDeployOnDemand;
       if (p?.id) {
