@@ -13,7 +13,9 @@ import { progresso, enviarArquivo } from "./api.mjs";
 
 const FONTES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fonts");
 const FONTE = path.join(FONTES, "Inter-Bold.otf");
-const W = 1280, H = 720, FPS = 24;
+// Tamanho do vídeo principal: 16:9 (1280x720) por padrão; pedidos com aspecto 9:16 saem verticais (1080x1920).
+let W = 1280, H = 720;
+const FPS = 24;
 const ENTRADA = 0.3; // respiro antes da 1ª fala da cena
 const ENTRE_FALAS = 0.25;
 const FADE = 0.15; // 0,15 s de saída + 0,15 s de entrada = 0,3 s entre cenas
@@ -74,11 +76,14 @@ export const trabalhosGpu = (pedido, plano) =>
 
 async function segmentoCartela(texto, d, pasta, nome) {
   const txt = path.join(pasta, `${nome}.txt`);
-  fs.writeFileSync(txt, quebrar(texto, 30));
+  const vert = H > W;
+  fs.writeFileSync(txt, quebrar(texto, vert ? 16 : 30));
   const saida = path.join(pasta, `${nome}.mp4`);
+  // no vertical a tela é muito maior que o texto: uma faixa colorida evita "tela preta" e dá destaque
+  const faixa = vert ? `drawbox=x=0:y=ih*0.3:w=iw:h=ih*0.4:color=0x7c3aed@0.22:t=fill,` : "";
   await ffmpeg([
     "-f", "lavfi", "-i", `color=c=0x0f0f14:s=${W}x${H}:r=${FPS}:d=${d.toFixed(3)}`,
-    "-vf", `drawtext=fontfile=${FONTE}:textfile=${txt}:fontcolor=white:fontsize=60:line_spacing=16:text_align=C:x=(w-text_w)/2:y=(h-text_h)/2,` +
+    "-vf", `${faixa}drawtext=fontfile=${FONTE}:textfile=${txt}:fontcolor=white:fontsize=${vert ? 84 : 60}:line_spacing=16:text_align=C:x=(w-text_w)/2:y=(h-text_h)/2,` +
       `fade=t=in:st=0:d=${FADE},fade=t=out:st=${(d - FADE).toFixed(3)}:d=${FADE},format=yuv420p`,
     "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS), saida,
   ]);
@@ -217,6 +222,8 @@ async function codificar(video, audio, ass, saida, maxMB, extraVf = "") {
 /** Monta video.mp4 + short.mp4, confere e entrega. clipes: Map cena -> arquivo local. */
 export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) {
   const e = pedido.entrada || {};
+  const vertical = e.aspecto === "9:16";
+  [W, H] = vertical ? [1080, 1920] : [1280, 720];
   const regras = [];
   const segs = [], auds = [], legendas = [], tempos = [], parados = [];
   let t = 0;
@@ -257,7 +264,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(auds, "a.txt"), "-c", "copy", voz]);
   const mix = await mixarAudio(voz, e.musica_url, Number(e.musica_volume ?? -20), pasta, "historia");
   const ass = path.join(pasta, "historia.ass");
-  fs.writeFileSync(ass, arquivoAss(legendas, W, H, 48, 36));
+  fs.writeFileSync(ass, vertical ? arquivoAss(legendas, W, H, 64, 520) : arquivoAss(legendas, W, H, 48, 36));
   const final = path.join(pasta, "video.mp4");
   await codificar(video, mix, ass, final, 90);
 
@@ -267,7 +274,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
 
   // ---- short 9:16 ----
   let shortUrl = null, confShort = null;
-  if (e.short?.cenas_ids?.length) {
+  if (!vertical && e.short?.cenas_ids?.length) {
     const sel = e.short.cenas_ids.map((id) => tempos.find((x) => x.cena === String(id))).filter(Boolean);
     if (sel.length) {
       const sp = path.join(pasta, "short");

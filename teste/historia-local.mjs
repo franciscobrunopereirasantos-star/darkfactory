@@ -41,7 +41,7 @@ const pedido = {
   id: "aaaaaaaa-0000-0000-0000-000000000001",
   formato: "historia_ilustrada",
   entrada: {
-    titulo: "Teste", aspecto: "16:9", musica_url: A("musica.mp3"),
+    titulo: "Teste", aspecto: process.env.ASPECTO || "16:9", musica_url: A("musica.mp3"),
     cenas: [
       { id: "1", tipo: "cartela", texto_cartela: "Em 1998, uma caixa de busca mudou tudo", falas: [{ audio_url: A("f1.mp3"), texto: "Em mil novecentos e noventa e oito tudo mudou" }] },
       { id: "2", tipo: "clipe", imagem_url: "x", prompt_movimento: "x", falas: [{ audio_url: A("f2.mp3"), texto: "Ela digitou a pergunta e esperou" }, { audio_url: A("f1.mp3"), texto: "E a resposta veio" }] },
