@@ -1,0 +1,29 @@
+name: Teste de imagem na GPU (Qwen-Image-Edit)
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: img-teste
+  cancel-in-progress: false
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ligar GPU, gerar as imagens e desligar
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
+          MAX_MIN: "55"
+          POD_SCRIPT: img_pod.sh
+          GPUS: "NVIDIA L40S,NVIDIA RTX 6000 Ada Generation,NVIDIA A100 80GB PCIe"
+        run: node ltx/deploy.mjs

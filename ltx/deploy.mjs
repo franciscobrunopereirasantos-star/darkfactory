@@ -12,8 +12,9 @@ const gql = async (query) => {
 const s = (v) => JSON.stringify(String(v ?? ""));
 const env = ["FABRICA_URL", "FABRICA_WORKER_TOKEN", "PEDIDO_ID", "RUNPOD_API_KEY", "HF_TOKEN", "CENAS_ATIVAS", "SCRIPT", "CENAS_CMP", "OPENAI_API_KEY"]
   .map((k) => `{ key: ${s(k)}, value: ${s(process.env[k])} }`).join(", ");
-const cmd = "bash -c 'curl -sL https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/pod.sh | bash'";
-const GPUS = ["NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB", "NVIDIA H100 PCIe", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation"];
+const POD_SCRIPT = process.env.POD_SCRIPT || "pod.sh";
+const cmd = `bash -c 'curl -sL https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/${POD_SCRIPT} | bash'`;
+const GPUS = process.env.GPUS ? process.env.GPUS.split(",") : ["NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB", "NVIDIA H100 PCIe", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation"];
 
 let pod = null;
 for (const gpu of GPUS) {
