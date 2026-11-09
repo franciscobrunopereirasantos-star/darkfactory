@@ -24,6 +24,7 @@ jobs:
           FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
           PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
           MAX_MIN: "55"
+          MIN_RAM: "60"
           POD_SCRIPT: img_pod.sh
           GPUS: "NVIDIA L40S,NVIDIA RTX 6000 Ada Generation,NVIDIA A100 80GB PCIe"
         run: node ltx/deploy.mjs
