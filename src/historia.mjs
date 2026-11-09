@@ -163,6 +163,25 @@ function arquivoAss(legendas, w, h, fonte, margemV, extra = "") {
     legendas.map(([a, b, x]) => `Dialogue: 0,${ts(a)},${ts(b)},L,,0,0,0,,${assTexto(x)}`).join("\n") + extra + "\n";
 }
 
+// Trilha mais curta que o vídeo: repete com crossfade de 2 s (sem corte seco) até cobrir a duração.
+export async function trilhaComLoop(musica, d, pasta, nome) {
+  const m = await duracao(musica);
+  if (!(m > 0) || m >= d + 0.5) return musica;
+  const XF = Math.min(2, m / 3);
+  const n = Math.min(40, Math.ceil((d - XF) / (m - XF)) + 1);
+  const ent = [];
+  for (let i = 0; i < n; i++) ent.push("-i", musica);
+  let f = "", ant = "[0:a]";
+  for (let i = 1; i < n; i++) {
+    const out = i === n - 1 ? "[t]" : `[x${i}]`;
+    f += `${ant}[${i}:a]acrossfade=d=${XF.toFixed(2)}:c1=tri:c2=tri${out};`;
+    ant = out;
+  }
+  const saida = path.join(pasta, `${nome}-trilha.wav`);
+  await ffmpeg([...ent, "-filter_complex", f.replace(/;$/, ""), "-map", "[t]", "-ar", "44100", "-ac", "2", saida]);
+  return saida;
+}
+
 // Voz + música com ducking + loudness -14 LUFS.
 async function mixarAudio(voz, musicaUrl, musicaDb, pasta, nome) {
   const saida = path.join(pasta, `${nome}-mix.wav`);
@@ -173,9 +192,10 @@ async function mixarAudio(voz, musicaUrl, musicaDb, pasta, nome) {
   const musica = path.join(pasta, "musica");
   if (!fs.existsSync(musica)) await baixar(musicaUrl, musica);
   const d = await duracao(voz);
+  const trilha = await trilhaComLoop(musica, d, pasta, nome);
   await ffmpeg([
-    "-i", voz, "-stream_loop", "-1", "-i", musica, "-filter_complex",
-    `[1:a]atrim=0:${d.toFixed(3)},aformat=channel_layouts=stereo,volume=${musicaDb}dB[m];` +
+    "-i", voz, "-i", trilha, "-filter_complex",
+    `[1:a]atrim=0:${d.toFixed(3)},aformat=channel_layouts=stereo,volume=${musicaDb}dB,afade=t=out:st=${Math.max(0, d - 1.5).toFixed(3)}:d=1.5[m];` +
       `[0:a]asplit=2[v][sc];[m][sc]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=500[md];` +
       `[v][md]amix=inputs=2:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[s]`,
     "-map", "[s]", "-t", d.toFixed(3), "-ar", "44100", "-ac", "2", saida,
