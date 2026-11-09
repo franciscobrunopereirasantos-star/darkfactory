@@ -130,11 +130,19 @@ export async function montar({ cenas, marca = {}, aspecto = "9:16", pasta, saida
   const legenda = path.join(pasta, "leg.ass");
   fs.writeFileSync(legenda, ass);
 
-  await ffmpeg([
+  // Teto de tamanho (90 MB): limita o bitrate pela duração; se ainda passar, recodifica mais leve.
+  const LIMITE_MB = 85;
+  const codificar = (kbps) => ffmpeg([
     "-i", video, "-i", audio,
     "-vf", `ass=${legenda}:fontsdir=${FONTES}`,
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", `${kbps}k`, "-bufsize", `${kbps * 2}k`, "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-shortest", saida,
   ]);
+  let kbps = Math.max(700, Math.min(6000, Math.floor((LIMITE_MB * 8 * 1024) / Math.max(t, 1)) - 170));
+  await codificar(kbps);
+  for (let i = 0; i < 2 && fs.statSync(saida).size > LIMITE_MB * 1048576; i++) {
+    kbps = Math.max(500, Math.floor(kbps * 0.75));
+    await codificar(kbps);
+  }
   return { duracao: t, tempos };
 }
