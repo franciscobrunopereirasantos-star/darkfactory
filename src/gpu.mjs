@@ -12,7 +12,24 @@ async function main() {
   if (ativo) { log(`servidor de GPU já está ligado (pod ${ativo.id})`); return; }
   let volume = null;
   if (process.env.USAR_VOLUME === "1") { try { volume = await garantirVolume(); } catch (e) { log("volume de rede indisponível, segue sem:", e.message); } }
-  const pod = await ligarPod({
+  // Sem placa barata agora: tenta de novo a cada 5 min por até GPU_ESPERA_MIN (padrão 50) antes de desistir.
+  const limite = Date.now() + Number(process.env.GPU_ESPERA_MIN || 50) * 60_000;
+  let pod;
+  for (;;) {
+    try { pod = await ligarPodServidor(volume); break; }
+    catch (e) {
+      if (Date.now() + 5 * 60_000 > limite) throw e;
+      log(`${e.message} — nova tentativa em 5 min`);
+      await new Promise((r) => setTimeout(r, 5 * 60_000));
+      const d2 = await gql(`query { myself { pods { id name desiredStatus } } }`);
+      if ((d2.myself?.pods || []).some((p) => p.name === NOME && p.desiredStatus === "RUNNING")) { log("outro disparo já ligou a GPU"); return; }
+    }
+  }
+  log(`servidor de GPU ligado: ${pod.gpu} (US$ ${pod.costPerHr}/h), pod ${pod.id}, ${pod.comVolume ? "com" : "sem"} volume`);
+}
+
+function ligarPodServidor(volume) {
+  return ligarPod({
     nome: NOME,
     cmd: "bash -c 'curl -sL https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/servidor_pod.sh | bash'",
     env: {
@@ -22,7 +39,6 @@ async function main() {
     },
     volume,
   });
-  log(`servidor de GPU ligado: ${pod.gpu} (US$ ${pod.costPerHr}/h), pod ${pod.id}, ${pod.comVolume ? "com" : "sem"} volume`);
 }
 
 main().catch((e) => { log("erro ao ligar a GPU:", e.message); process.exit(1); });

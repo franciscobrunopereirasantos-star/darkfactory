@@ -114,10 +114,24 @@ class Motor:
                 self.modo = "fp8-armazenamento"
             except Exception as e:  # noqa
                 print("[servidor] layerwise casting indisponível:", e, flush=True)
-        self.pipe.enable_model_cpu_offload()
+        self.na_gpu_ou_offload()
         if hasattr(self.pipe.vae, "enable_tiling"):
             self.pipe.vae.enable_tiling()
         self.tipo = tipo
+
+    def na_gpu_ou_offload(self):
+        """Com 70+ GB de VRAM deixa o pipeline inteiro na GPU (sem ida e volta pela RAM a cada clipe);
+        se não couber, volta para o descarregamento por modelo."""
+        if self.vram >= 70 and os.environ.get("GPU_SEM_OFFLOAD", "1") == "1":
+            try:
+                self.pipe.to("cuda")
+                self.modo += "+gpu"
+                return
+            except torch.OutOfMemoryError:
+                print("[servidor] não coube inteiro na GPU: usando offload", flush=True)
+                self.pipe.to("cpu")
+                torch.cuda.empty_cache()
+        self.pipe.enable_model_cpu_offload()
 
     def carregar_qwen(self):
         from diffusers import QwenImageEditPlusPipeline
@@ -144,10 +158,17 @@ class Motor:
                 self.modo = "fp8-armazenamento"
             except Exception as e:  # noqa
                 print("[servidor] layerwise casting indisponível (qwen):", e, flush=True)
-        self.pipe.enable_model_cpu_offload()
+        self.na_gpu_ou_offload()
         self.tipo = "qwen"
 
     def sequencial(self):
+        if "+gpu" in self.modo:
+            # 1º degrau: estava inteiro na GPU e faltou memória → offload por modelo
+            self.pipe.to("cpu")
+            torch.cuda.empty_cache()
+            self.pipe.enable_model_cpu_offload()
+            self.modo = self.modo.replace("+gpu", "")
+            return True
         if self.modo.startswith("sequencial"):
             return False
         self.pipe.remove_all_hooks()
@@ -184,32 +205,39 @@ def gerar_clipe(motor, job):
         motor.carregar("t2v")
         kwargs.update(width=w, height=h)
     t1 = time.time()
-    for tentativa in range(2):
+    for tentativa in range(3):
         try:
             video, _a = motor.pipe(**kwargs)
             break
         except torch.OutOfMemoryError:
             torch.cuda.empty_cache()
-            if tentativa == 0 and motor.sequencial():
+            if tentativa < 2 and motor.sequencial():
                 progresso(job["id"], "sem memória: mudando para descarregamento sequencial")
                 continue
             raise
     gpu_s = time.time() - t1
-    bruto, final = f"/root/bruto-{job['id']}.mp4", f"/root/clipe-{job['id']}.mp4"
-    encode_video(video[0], fps=24, output_path=bruto)
-    escala = "720:1280" if h > w else "1280:720"
-    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-i", bruto, "-frames:v", str(quadros),
-                    "-vf", f"scale={escala}:flags=lanczos,setsar=1", "-r", "24", "-an", "-c:v", "libx264", "-crf", "16",
-                    "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", final], check=True)
-    url = enviar(job["id"], final, "clipe.mp4")
-    for f in (bruto, final):
-        try:
-            os.remove(f)
-        except OSError:
-            pass
-    ew, eh = (int(x) for x in escala.split(":"))
-    return {"url": url, "duracao_s": round(quadros / 24, 3), "largura": ew, "altura": eh, "quadros": quadros,
-            "modo": motor.modo, "seed": seed}, gpu_s
+    quadros_np = video[0]
+    del video
+    modo = motor.modo
+
+    def finalizar():
+        bruto, final = f"/root/bruto-{job['id']}.mp4", f"/root/clipe-{job['id']}.mp4"
+        encode_video(quadros_np, fps=24, output_path=bruto)
+        escala = "720:1280" if h > w else "1280:720"
+        subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-i", bruto, "-frames:v", str(quadros),
+                        "-vf", f"scale={escala}:flags=lanczos,setsar=1", "-r", "24", "-an", "-c:v", "libx264", "-crf", "16",
+                        "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", final], check=True)
+        url = enviar(job["id"], final, "clipe.mp4")
+        for f in (bruto, final):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        ew, eh = (int(x) for x in escala.split(":"))
+        return {"url": url, "duracao_s": round(quadros / 24, 3), "largura": ew, "altura": eh, "quadros": quadros,
+                "modo": modo, "seed": seed}
+
+    return finalizar, gpu_s
 
 
 def limpar_disco(minimo_gb=15):
@@ -266,18 +294,33 @@ def gerar_imagem(motor, job):
     t1 = time.time()
     img = motor.pipe(**kw).images[0]
     gpu_s = time.time() - t1
-    arq = f"/root/imagem-{job['id']}.png"
-    img.save(arq)
-    url = enviar(job["id"], arq, "imagem.png", "image/png")
+    modo = motor.modo
+
+    def finalizar():
+        arq = f"/root/imagem-{job['id']}.png"
+        img.save(arq)
+        url = enviar(job["id"], arq, "imagem.png", "image/png")
+        try:
+            os.remove(arq)
+        except OSError:
+            pass
+        return {"url": url, "largura": img.width, "altura": img.height, "modelo": "qwen-image-edit-2509",
+                "passos": passos, "seed": seed, "modo": modo}
+
+    return finalizar, gpu_s
+
+
+def concluir_falha(job_id):
+    erro = traceback.format_exc()[-1500:]
+    print(erro, flush=True)
     try:
-        os.remove(arq)
-    except OSError:
-        pass
-    return {"url": url, "largura": img.width, "altura": img.height, "modelo": "qwen-image-edit-2509",
-            "passos": passos, "seed": seed, "modo": motor.modo}, gpu_s
+        api("jobs/concluir", {"job_id": job_id, "status": "falhou", "erro": erro, "gpu": estado["gpu"]})
+    except Exception as e:  # noqa
+        print("[servidor] concluir falhou:", e, flush=True)
 
 
 def main():
+    from concurrent.futures import ThreadPoolExecutor
     estado["gpu"] = torch.cuda.get_device_name(0)
     threading.Thread(target=batimento, daemon=True).start()
     motor = Motor()
@@ -287,8 +330,26 @@ def main():
     sinal()
     print(f"[servidor] LTX carregado em {time.time() - t0:.0f} s na {estado['gpu']} ({motor.modo})", flush=True)
 
+    # ffmpeg + upload + concluir rodam aqui, enquanto a GPU já gera o próximo job
+    fundo = ThreadPoolExecutor(max_workers=1)
+    pendentes = []
+
+    def entregar(job, finalizar, gpu_s, t_job):
+        try:
+            resultado = finalizar()
+            api("jobs/concluir", {"job_id": job["id"], "status": "pronto", "resultado": resultado,
+                                  "segundos_gpu": round(gpu_s, 1), "gpu": estado["gpu"],
+                                  "custo_usd": round(gpu_s / 3600 * CUSTO_HORA, 4)})
+            print(f"[servidor] {job['id']}: pronto ({gpu_s:.0f} s de GPU, {time.time() - t_job:.0f} s no total)", flush=True)
+        except Exception:  # noqa
+            concluir_falha(job["id"])
+
     ociosa_desde = time.time()
     while True:
+        pendentes = [f for f in pendentes if not f.done()]
+        while len(pendentes) >= 2:
+            pendentes[0].result()
+            pendentes = [f for f in pendentes if not f.done()]
         # Primeiro pede o tipo do modelo que já está carregado (evita trocar LTX<->Qwen a cada job, que custa
         # minutos de GPU); só quando acabar esse tipo pede o outro.
         atual = "imagem_gpu" if motor.tipo == "qwen" else "clipe"
@@ -305,32 +366,29 @@ def main():
         if job:
             limpar_disco()
         if not job:
+            if pendentes:
+                time.sleep(5)
+                continue
             if estado["estado"] != "ociosa":
                 estado["estado"] = "ociosa"
                 sinal()
             if time.time() - ociosa_desde > OCIOSA_MIN * 60:
                 print(f"[servidor] {OCIOSA_MIN:.0f} min sem trabalho: encerrando", flush=True)
+                fundo.shutdown(wait=True)
                 return
             time.sleep(15)
             continue
         estado["estado"] = "ligada"
+        t_job = time.time()
         try:
             progresso(job["id"], f"gerando na {estado['gpu']}")
             if job.get("tipo") == "imagem_gpu":
-                resultado, gpu_s = gerar_imagem(motor, job)
+                finalizar, gpu_s = gerar_imagem(motor, job)
             else:
-                resultado, gpu_s = gerar_clipe(motor, job)
-            api("jobs/concluir", {"job_id": job["id"], "status": "pronto", "resultado": resultado,
-                                  "segundos_gpu": round(gpu_s, 1), "gpu": estado["gpu"],
-                                  "custo_usd": round(gpu_s / 3600 * CUSTO_HORA, 4)})
-            print(f"[servidor] {job['id']}: pronto em {gpu_s:.0f} s", flush=True)
-        except Exception:
-            erro = traceback.format_exc()[-1500:]
-            print(erro, flush=True)
-            try:
-                api("jobs/concluir", {"job_id": job["id"], "status": "falhou", "erro": erro, "gpu": estado["gpu"]})
-            except Exception as e:  # noqa
-                print("[servidor] concluir falhou:", e, flush=True)
+                finalizar, gpu_s = gerar_clipe(motor, job)
+            pendentes.append(fundo.submit(entregar, job, finalizar, gpu_s, t_job))
+        except Exception:  # noqa
+            concluir_falha(job["id"])
         ociosa_desde = time.time()
 
 

@@ -17,18 +17,21 @@ export const VOLUME_NOME = "ltx-pesos";
 export const VOLUME_GB = Number(process.env.VOLUME_GB || 100);
 export const VOLUME_DC = process.env.VOLUME_DC || "US-IL-1";
 
-// GPUs em ordem de preferência. sps = segundos de GPU por segundo de clipe (medido; o da L40S/6000 Ada é chute até o 1º lote).
+// GPUs em ordem de preferência (custo por clipe). sps = segundos de GPU por segundo de clipe.
+// Medido em 09–10/11: L40S fp8 ≈ 20 s/s; A100 80GB bf16 ≈ 17–22 s/s (mesma velocidade, quase o dobro do preço).
+// A6000/A40 são ~2x mais lentas, mas custam metade: o custo por clipe fica parecido com a L40S.
 export const GPUS = [
-  { id: "NVIDIA L40S", preco: 1.09, sps: 21 },
-  { id: "NVIDIA RTX 6000 Ada Generation", preco: 0.95, sps: 40 },
+  { id: "NVIDIA L40S", preco: 0.86, sps: 20 },
+  { id: "NVIDIA L40", preco: 0.99, sps: 26 },
+  { id: "NVIDIA RTX 6000 Ada Generation", preco: 0.77, sps: 24 },
+  { id: "NVIDIA RTX A6000", preco: 0.49, sps: 40 },
+  { id: "NVIDIA A40", preco: 0.44, sps: 42 },
   { id: "NVIDIA A100 80GB PCIe", preco: 1.64, sps: 20 },
   { id: "NVIDIA A100-SXM4-80GB", preco: 1.74, sps: 18 },
   { id: "NVIDIA H100 PCIe", preco: 2.39, sps: 14 },
-  // 48 GB mais antigas/baratas: só entram se as de cima estiverem esgotadas (sps é chute, mais lentas)
-  { id: "NVIDIA L40", preco: 0.99, sps: 26 },
-  { id: "NVIDIA RTX A6000", preco: 0.49, sps: 40 },
-  { id: "NVIDIA A40", preco: 0.44, sps: 42 },
 ];
+/** Teto de US$/h aceito (padrão 1,00). Placas acima disso nem são tentadas; se a RunPod cobrar mais, o pod é desligado. */
+export const PRECO_MAX = Number(process.env.GPU_PRECO_MAX || 1.0);
 export const BOOT_COM_VOLUME_S = 300; // ligar + instalar + carregar com pesos no volume
 export const BOOT_SEM_VOLUME_S = 1000; // baixar 72 GB do Hugging Face
 
@@ -52,24 +55,32 @@ export async function ligarPod({ nome, cmd, env, volume }) {
   const base = `cloudType: __NUVEM__, gpuCount: 1, name: ${s(nome)}, imageName: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
     containerDiskInGb: 200, minVcpuCount: 8, minMemoryInGb: 60, dockerArgs: ${s(cmd)}, ports: "", env: [${envs}, { key: "COM_VOLUME", value: "__VOL__" }]`;
   const tentativas = [];
-  if (volume) for (const g of GPUS) tentativas.push({ g, extra: `, networkVolumeId: ${s(volume.id)}, volumeMountPath: "/workspace", dataCenterId: ${s(volume.dataCenterId)}`, vol: "1" });
-  for (const g of GPUS) tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0" });
-  // último recurso: nuvem comunitária (mais barata, menos garantida), sem volume
-  for (const g of GPUS) tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0", nuvem: "COMMUNITY" });
+  const baratas = GPUS.filter((g) => g.preco <= PRECO_MAX);
+  if (volume) for (const g of baratas) tentativas.push({ g, extra: `, networkVolumeId: ${s(volume.id)}, volumeMountPath: "/workspace", dataCenterId: ${s(volume.dataCenterId)}`, vol: "1" });
+  // por placa: primeiro a nuvem comunitária (mais barata), depois a segura
+  for (const g of baratas) {
+    tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0", nuvem: "COMMUNITY" });
+    tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0" });
+  }
   for (const t of tentativas) {
     try {
       const q = `mutation { podFindAndDeployOnDemand(input: { ${base.replace("__VOL__", t.vol).replace("__NUVEM__", t.nuvem || "SECURE")}, gpuTypeId: ${s(t.g.id)}${t.extra} }) { id costPerHr machine { gpuDisplayName } } }`;
       const d = await gql(q);
       const p = d.podFindAndDeployOnDemand;
+      if (p?.id && Number(p.costPerHr) > PRECO_MAX) {
+        log(`${t.g.id}: RunPod cobrou US$ ${p.costPerHr}/h (teto ${PRECO_MAX}) — desligando e tentando outra`);
+        await desligarPod({ id: p.id });
+        continue;
+      }
       if (p?.id) {
-        log(`GPU ligada: ${t.g.id} ${t.vol === "1" ? "com volume" : "SEM volume (vai baixar os pesos)"} — US$ ${p.costPerHr}/h, pod ${p.id}`);
+        log(`GPU ligada: ${t.g.id} ${t.nuvem === "COMMUNITY" ? "comunitária " : ""}${t.vol === "1" ? "com volume" : "SEM volume (vai baixar os pesos)"} — US$ ${p.costPerHr}/h, pod ${p.id}`);
         return { ...p, gpu: t.g.id, comVolume: t.vol === "1", inicio: Date.now() };
       }
     } catch (e) {
       log(`${t.g.id} ${t.vol === "1" ? "(volume)" : ""}: indisponível — ${e.message.slice(0, 140)}`);
     }
   }
-  throw new Error("nenhuma GPU disponível na RunPod agora");
+  throw new Error(`nenhuma GPU até US$ ${PRECO_MAX}/h disponível na RunPod agora`);
 }
 
 /** Espera o pod se desligar sozinho; desliga à força depois de maxMin. Devolve os minutos ligados. */
