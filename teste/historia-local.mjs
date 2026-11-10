@@ -47,7 +47,13 @@ const pedido = {
       { id: "2", tipo: "clipe", imagem_url: "x", prompt_movimento: "x", falas: [{ audio_url: A("f2.mp3"), texto: "Ela digitou a pergunta e esperou" }, { audio_url: A("f1.mp3"), texto: "E a resposta veio" }] },
       { id: "3", tipo: "clipe", imagem_url: "x", prompt_movimento: "x", falas: [{ audio_url: A("f3.mp3"), texto: "Uma fala longa para testar o congelamento do último quadro com zoom lento" }, { audio_url: A("f4.mp3"), texto: "e continua falando bastante tempo" }] },
     ],
-    short: { cenas_ids: ["2", "3", "2", "3", "2", "3"], titulo: "Como a busca\nmudou tudo" },
+    ...(process.env.CORTES
+      ? { cortes_verticais: [
+          { id: "antes", cenas_ids: ["2", "3", "2", "3", "2", "3", "2"], chamada: "a história completa sai hoje às 19h" },
+          { id: "junto", cenas_ids: ["2", "3", "2", "3", "2", "3"], chamada: "história completa no canal" },
+          { id: "depois", cenas_ids: ["3", "2", "3", "2", "3", "2"], chamada: "assista a história completa no canal" },
+        ] }
+      : { short: { cenas_ids: ["2", "3", "2", "3", "2", "3"], titulo: "Como a busca\nmudou tudo" } }),
   },
 };
 const { plano } = await prepararHistoria(pedido, pasta);

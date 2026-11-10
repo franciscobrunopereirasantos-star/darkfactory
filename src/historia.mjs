@@ -219,6 +219,62 @@ async function codificar(video, audio, ass, saida, maxMB, extraVf = "") {
   ]);
 }
 
+/** Recorta as cenas escolhidas do vídeo horizontal e monta um corte vertical 9:16 (fundo desfocado + quadro
+ * central, título nos 3 primeiros segundos, cartela final de 3 s). Corpo de até 75 s. */
+async function montarCorte(pedido, e, d, tempos, pasta, lista) {
+  const sel = d.cenas_ids.map((id) => tempos.find((x) => x.cena === String(id))).filter(Boolean);
+  if (!sel.length) throw new Error(`corte ${d.id}: nenhuma cena encontrada`);
+  const nome = d.legado ? "short" : `corte-${d.id}`;
+  const sp = path.join(pasta, nome);
+  fs.mkdirSync(sp, { recursive: true });
+  const regras = [];
+  const sv = path.join(sp, "v.mp4"), sa = path.join(sp, "a.wav");
+  await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(sel.map((x) => x.clipe), `${nome}/v.txt`), "-c", "copy", sv]);
+  await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(sel.map((x) => x.audio), `${nome}/a.txt`), "-c", "copy", sa]);
+  const corpo = Math.min(d.legado ? 57 : 75, sel.reduce((s, x) => s + (x.fim - x.inicio), 0));
+  const fim = 3;
+  // vídeo vertical: fundo desfocado + quadro central; título nos 3 primeiros segundos; cartela final
+  const tit = path.join(sp, "titulo.txt");
+  fs.writeFileSync(tit, String(d.titulo || "").replace(/\\n/g, "\n"));
+  const cartTxt = path.join(sp, "cartela.txt");
+  fs.writeFileSync(cartTxt, quebrar(d.cartela_final || CARTELA_FINAL_SHORT, 22));
+  const vert = path.join(sp, "vert.mp4");
+  await ffmpeg([
+    "-i", sv, "-f", "lavfi", "-i", `color=c=0x2b1650:s=1080x1920:r=${FPS}:d=${fim}`,
+    "-filter_complex",
+    `[0:v]trim=0:${corpo.toFixed(3)},setpts=PTS-STARTPTS,split=2[a][b];` +
+      `[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.12[fundo];` +
+      `[b]scale=1080:-2[frente];[fundo][frente]overlay=0:(H-h)/2,` +
+      `drawtext=fontfile=${FONTE}:textfile=${tit}:fontcolor=white:fontsize=68:line_spacing=14:text_align=C:borderw=5:bordercolor=black:x=(w-text_w)/2:y=230:enable='lt(t,3)',setsar=1,format=yuv420p[corpo];` +
+      `[1:v]drawbox=x=0:y=ih*0.3:w=iw:h=ih*0.4:color=0x7c3aed@0.35:t=fill,drawtext=fontfile=${FONTE}:textfile=${cartTxt}:fontcolor=white:fontsize=70:line_spacing=18:text_align=C:x=(w-text_w)/2:y=(h-text_h)/2,fade=t=in:st=0:d=0.3,setsar=1,format=yuv420p[fim];` +
+      `[corpo][fim]concat=n=2:v=1:a=0[v]`,
+    "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS), vert,
+  ]);
+  const sa2 = path.join(sp, "a2.wav");
+  await ffmpeg(["-i", sa, "-af", `atrim=0:${corpo.toFixed(3)},afade=t=out:st=${Math.max(0, corpo - 0.4).toFixed(3)}:d=0.4,apad`, "-t", (corpo + fim).toFixed(3), "-ar", "44100", "-ac", "2", sa2]);
+  const smix = await mixarAudio(sa2, e.musica_url, Number(e.musica_volume ?? -20), sp, "short");
+  // legendas do short: as mesmas falas, deslocadas para a nova linha do tempo
+  const legS = [];
+  let base = 0;
+  for (const x of sel) {
+    for (const f of x.c.falas) for (const [a, b, txt] of legendasDaFala(f, base)) if (a < corpo) legS.push([a, Math.min(b, corpo), txt]);
+    base += x.fim - x.inicio;
+  }
+  const sass = path.join(sp, "short.ass");
+  fs.writeFileSync(sass, arquivoAss(legS, 1080, 1920, 64, 520));
+  const saida = path.join(pasta, `${nome}.mp4`);
+  await codificar(vert, smix, sass, saida, 60);
+  const conf = await conferir(saida, { dims: { W: 1080, H: 1920 }, duracaoEsperada: corpo + fim, maxMB: 60, rotulo: `${nome}_` });
+  const ds = conf.resultado.duracao_seg;
+  const [lo, hi] = d.legado ? [45, 60.5] : [50, 78.5];
+  const minimo = Math.min(lo, corpo + fim - 0.5);
+  conf.regras.push({ regra: `${nome}_duracao`, ok: ds >= minimo && ds <= hi, detalhe: `${ds} s (faixa ${minimo.toFixed(1)}–${hi} s)` });
+  regras.push(...conf.regras);
+  let url = null;
+  if (!conf.regras.some((r) => !r.ok && /formato|tem_audio|tamanho/.test(r.regra))) url = await enviarArquivo(pedido.id, `${nome}.mp4`, saida);
+  return { url, duracao_seg: ds, regras };
+}
+
 /** Monta video.mp4 + short.mp4, confere e entrega. clipes: Map cena -> arquivo local. */
 export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) {
   const e = pedido.entrada || {};
@@ -272,59 +328,24 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   const conf = await conferir(final, { dims: { W, H }, duracaoEsperada: t, tempos, maxMB: 90, paradoPermitido: parados });
   regras.push(...conf.regras);
 
-  // ---- short 9:16 ----
-  let shortUrl = null, confShort = null;
-  if (!vertical && e.short?.cenas_ids?.length) {
-    const sel = e.short.cenas_ids.map((id) => tempos.find((x) => x.cena === String(id))).filter(Boolean);
-    if (sel.length) {
-      const sp = path.join(pasta, "short");
-      fs.mkdirSync(sp, { recursive: true });
-      const sv = path.join(sp, "v.mp4"), sa = path.join(sp, "a.wav");
-      await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(sel.map((x) => x.clipe), "short/v.txt"), "-c", "copy", sv]);
-      await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(sel.map((x) => x.audio), "short/a.txt"), "-c", "copy", sa]);
-      const corpo = Math.min(57, sel.reduce((s, x) => s + (x.fim - x.inicio), 0));
-      const fim = 3;
-      // vídeo vertical: fundo desfocado + quadro central; título nos 3 primeiros segundos; cartela final
-      const tit = path.join(sp, "titulo.txt");
-      fs.writeFileSync(tit, String(e.short.titulo || e.titulo || "").replace(/\\n/g, "\n"));
-      const cartTxt = path.join(sp, "cartela.txt");
-      fs.writeFileSync(cartTxt, quebrar(e.short.cartela_final || CARTELA_FINAL_SHORT, 22));
-      const vert = path.join(sp, "vert.mp4");
-      await ffmpeg([
-        "-i", sv, "-f", "lavfi", "-i", `color=c=0x0f0f14:s=1080x1920:r=${FPS}:d=${fim}`,
-        "-filter_complex",
-        `[0:v]trim=0:${corpo.toFixed(3)},setpts=PTS-STARTPTS,split=2[a][b];` +
-          `[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.12[fundo];` +
-          `[b]scale=1080:-2[frente];[fundo][frente]overlay=0:(H-h)/2,` +
-          `drawtext=fontfile=${FONTE}:textfile=${tit}:fontcolor=white:fontsize=68:line_spacing=14:text_align=C:borderw=5:bordercolor=black:x=(w-text_w)/2:y=230:enable='lt(t,3)',setsar=1,format=yuv420p[corpo];` +
-          `[1:v]drawtext=fontfile=${FONTE}:textfile=${cartTxt}:fontcolor=white:fontsize=70:line_spacing=18:text_align=C:x=(w-text_w)/2:y=(h-text_h)/2,fade=t=in:st=0:d=0.3,setsar=1,format=yuv420p[fim];` +
-          `[corpo][fim]concat=n=2:v=1:a=0[v]`,
-        "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", String(FPS), vert,
-      ]);
-      const sa2 = path.join(sp, "a2.wav");
-      await ffmpeg(["-i", sa, "-af", `atrim=0:${corpo.toFixed(3)},afade=t=out:st=${Math.max(0, corpo - 0.4).toFixed(3)}:d=0.4,apad`, "-t", (corpo + fim).toFixed(3), "-ar", "44100", "-ac", "2", sa2]);
-      const smix = await mixarAudio(sa2, e.musica_url, Number(e.musica_volume ?? -20), sp, "short");
-      // legendas do short: as mesmas falas, deslocadas para a nova linha do tempo
-      const legS = [];
-      let base = 0;
-      for (const x of sel) {
-        for (const f of x.c.falas) for (const [a, b, txt] of legendasDaFala(f, base)) if (a < corpo) legS.push([a, Math.min(b, corpo), txt]);
-        base += x.fim - x.inicio;
+  // ---- cortes verticais 9:16 (1 short legado ou N cortes, ex.: antes/junto/depois do Histórias) ----
+  const defs = Array.isArray(e.cortes_verticais) && e.cortes_verticais.length
+    ? e.cortes_verticais.map((c, i) => ({ id: String(c.id || `corte-${i + 1}`), cenas_ids: c.cenas_ids || [], titulo: c.titulo || e.titulo, cartela_final: c.chamada || c.cartela_final, legado: false }))
+    : e.short?.cenas_ids?.length ? [{ id: "short", cenas_ids: e.short.cenas_ids, titulo: e.short.titulo || e.titulo, cartela_final: e.short.cartela_final, legado: true }] : [];
+  const cortes = [];
+  if (!vertical) {
+    for (const d of defs) {
+      try {
+        const r = await montarCorte(pedido, e, d, tempos, pasta, lista);
+        regras.push(...r.regras);
+        cortes.push({ id: d.id, url: r.url, duracao_seg: r.duracao_seg });
+      } catch (err) {
+        regras.push({ regra: `corte_${d.id}`, ok: false, detalhe: String(err?.message || err).slice(0, 300) });
       }
-      const sass = path.join(sp, "short.ass");
-      fs.writeFileSync(sass, arquivoAss(legS, 1080, 1920, 64, 520));
-      const shortFinal = path.join(pasta, "short.mp4");
-      await codificar(vert, smix, sass, shortFinal, 60);
-      confShort = await conferir(shortFinal, { dims: { W: 1080, H: 1920 }, duracaoEsperada: corpo + fim, maxMB: 60, rotulo: "short_" });
-      const ds = confShort.resultado.duracao_seg;
-      // 45–60 s; se as cenas escolhidas somam menos que isso, basta usar todas (+ cartela final).
-      const minimo = Math.min(45, corpo + fim - 0.5);
-      confShort.regras.push({ regra: "short_duracao_45_60", ok: ds >= minimo && ds <= 60.5, detalhe: `${ds} s (mínimo ${minimo.toFixed(1)} s)` });
-      regras.push(...confShort.regras);
-      if (!confShort.regras.some((r) => !r.ok && /formato|tem_audio|tamanho/.test(r.regra)))
-        shortUrl = await enviarArquivo(pedido.id, "short.mp4", shortFinal);
     }
   }
+  const shortUrl = cortes.find((c) => c.id === "short")?.url ?? cortes[0]?.url ?? null;
+  const confShort = { resultado: { duracao_seg: cortes.find((c) => c.url === shortUrl)?.duracao_seg } };
 
   const falhas = regras.filter((r) => !r.ok);
   const graves = conf.status === "falhou";
@@ -337,7 +358,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   log(`historia ${pedido.id.slice(0, 8)}…: ${status} (${t.toFixed(1)} s)`);
   return {
     status,
-    resultado: { ...conf.resultado, video_url, short_url: shortUrl, short_duracao_seg: confShort?.resultado?.duracao_seg, cenas: plano.length, ...extras },
+    resultado: { ...conf.resultado, video_url, short_url: shortUrl, short_duracao_seg: confShort?.resultado?.duracao_seg, cortes, cenas: plano.length, ...extras },
     conferencia: { regras },
     erro: falhas.length ? falhas.map((r) => `${r.regra}: ${r.detalhe}`).join("; ").slice(0, 1000) : null,
   };
