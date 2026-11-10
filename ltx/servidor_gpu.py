@@ -56,6 +56,28 @@ def enviar(job, arquivo, nome, tipo="video/mp4"):
     return r.get("url_final")
 
 
+def ajustar_orientacao(img, aspecto):
+    """Rede de segurança: se a imagem veio na orientação errada para o vídeo, corta o centro na proporção certa
+    (nunca encaixa com faixas). aspecto "9:16" → vertical; "16:9" → horizontal; vazio → mantém."""
+    if aspecto not in ("9:16", "16:9"):
+        return img
+    alvo = 9 / 16 if aspecto == "9:16" else 16 / 9
+    w, h = img.size
+    atual = w / h
+    if (alvo < 1) == (atual < 1) and abs(atual - alvo) / alvo < 0.15:
+        return img
+    if atual > alvo:  # larga demais: corta as laterais
+        nw = max(16, round(h * alvo))
+        x = (w - nw) // 2
+        caixa = (x, 0, x + nw, h)
+    else:  # alta demais: corta em cima e embaixo
+        nh = max(16, round(w / alvo))
+        y = (h - nh) // 2
+        caixa = (0, y, w, y + nh)
+    print(f"[gpu] imagem {w}x{h} fora do formato {aspecto}: corte central {caixa}", flush=True)
+    return img.crop(caixa)
+
+
 def tamanho_ltx(w, h):
     if w % 32 == 0 and h % 32 == 0 and w <= 1376:
         return w, h
@@ -151,6 +173,7 @@ def gerar_clipe(motor, job):
                   generator=torch.Generator("cuda").manual_seed(seed), output_type="np", return_dict=False, **DESTILADO)
     if e.get("imagem_url"):
         img = load_image(e["imagem_url"]).convert("RGB")
+        img = ajustar_orientacao(img, e.get("aspecto"))
         w, h = tamanho_ltx(*img.size)
         if (w, h) != img.size:
             img = img.resize((w, h))
@@ -199,8 +222,11 @@ def baixar_imagem(url):
 
 def gerar_imagem(motor, job):
     e = job.get("entrada") or {}
-    largura = int(e.get("largura") or 1376)
-    altura = int(e.get("altura") or 768)
+    vertical = e.get("aspecto") == "9:16"
+    largura = int(e.get("largura") or (768 if vertical else 1376))
+    altura = int(e.get("altura") or (1376 if vertical else 768))
+    if e.get("aspecto") in ("9:16", "16:9") and (largura < altura) != vertical:
+        largura, altura = altura, largura  # pedido 9:16 nunca gera imagem deitada (e vice-versa)
     largura, altura = max(256, largura // 16 * 16), max(256, altura // 16 * 16)
     seed = int(e.get("seed") or 42)
     motor.carregar("qwen")
