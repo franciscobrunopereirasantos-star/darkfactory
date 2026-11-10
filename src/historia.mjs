@@ -20,6 +20,7 @@ const ENTRADA = 0.3; // respiro antes da 1ª fala da cena
 const ENTRE_FALAS = 0.25;
 const FADE = 0.15; // 0,15 s de saída + 0,15 s de entrada = 0,3 s entre cenas
 export const CLIPE_MIN = 5, CLIPE_MAX = 10;
+const CENA_MIN = 2; // cena com fala muito curta (ex.: gancho de 1 s) ainda dura pelo menos 2 s
 const CARTELA_FINAL_SHORT = "A história completa está no canal e em fuiperguntar.com.br";
 
 const nCena = (c, i) => (/^\d+$/.test(String(c.id)) ? Number(c.id) : i + 1);
@@ -60,7 +61,9 @@ export async function prepararHistoria(pedido, pasta) {
     const precisa = falas.length ? ENTRADA + audio + 0.3 : 0; // = falas + 0,6 s
     const tipo = c.tipo === "cartela" ? "cartela" : "clipe";
     const durClipe = tipo === "clipe" ? Math.min(CLIPE_MAX, Math.max(CLIPE_MIN, precisa)) : 0;
-    const durCena = tipo === "clipe" ? Math.max(durClipe, precisa) : falas.length ? Math.max(3, precisa) : 3;
+    // Cena com fala dura o tempo da fala (+ respiros), mesmo que o clipe seja mais longo: o clipe é cortado.
+    // Antes a cena nunca ficava menor que o clipe (mín. 5 s) e falas curtas deixavam 1,5–3 s de silêncio.
+    const durCena = tipo === "clipe" ? (falas.length ? Math.max(CENA_MIN, precisa) : durClipe) : falas.length ? Math.max(3, precisa) : 3;
     plano.push({ id: String(c.id), n: nCena(c, i), tipo, falas, durClipe, durCena, congelado: Math.max(0, durCena - durClipe),
       imagem_url: c.imagem_url, prompt: c.prompt_movimento, texto_cartela: c.texto_cartela, clipe_url: c.clipe_url, clipePronto: !!c.clipe_url });
   }
@@ -300,7 +303,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
       const previsto = c.durClipe;
       if (c.clipePronto && Math.abs(real - previsto) <= 1) {
         c.durClipe = Math.min(real, CLIPE_MAX + 0.5);
-        c.durCena = Math.max(c.durCena, c.durClipe);
+        if (!c.falas.length) c.durCena = c.durClipe; // sem fala: a cena acompanha o clipe
         c.congelado = Math.max(0, c.durCena - c.durClipe);
       }
       const ok = Math.abs(real - c.durClipe) <= 0.15;

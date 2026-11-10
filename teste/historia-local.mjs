@@ -46,6 +46,8 @@ const pedido = {
       { id: "1", tipo: "cartela", texto_cartela: "Em 1998, uma caixa de busca mudou tudo", falas: [{ audio_url: A("f1.mp3"), texto: "Em mil novecentos e noventa e oito tudo mudou" }] },
       { id: "2", tipo: "clipe", imagem_url: "x", prompt_movimento: "x", falas: [{ audio_url: A("f2.mp3"), texto: "Ela digitou a pergunta e esperou" }, { audio_url: A("f1.mp3"), texto: "E a resposta veio" }] },
       { id: "3", tipo: "clipe", imagem_url: "x", prompt_movimento: "x", falas: [{ audio_url: A("f3.mp3"), texto: "Uma fala longa para testar o congelamento do último quadro com zoom lento" }, { audio_url: A("f4.mp3"), texto: "e continua falando bastante tempo" }] },
+      // fala curta (2,2 s) em clipe de 5 s: a cena deve durar ~2,8 s, sem silêncio no fim
+      { id: "4", tipo: "clipe", imagem_url: "x", prompt_movimento: "x", falas: [{ audio_url: A("f1.mp3"), texto: "Você sabia?" }] },
     ],
     ...(process.env.CORTES
       ? { cortes_verticais: [
