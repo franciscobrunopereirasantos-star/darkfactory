@@ -1,0 +1,30 @@
+name: Upload YouTube
+
+on:
+  repository_dispatch:
+    types: [youtube-upload]   # a Fábrica manda { publicacao_id } quando o vídeo passa de 60 MB
+  workflow_dispatch:
+    inputs:
+      publicacao_id:
+        description: "id da fabrica_agenda_publicacoes"
+        required: true
+
+concurrency:
+  group: youtube-${{ github.event.client_payload.publicacao_id || github.event.inputs.publicacao_id }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enviar ao YouTube
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PUBLICACAO_ID: ${{ github.event.client_payload.publicacao_id || github.event.inputs.publicacao_id }}
+        run: node src/youtube-upload.mjs
