@@ -50,7 +50,7 @@ export async function garantirVolume() {
 export async function ligarPod({ nome, cmd, env, volume }) {
   const envs = Object.entries(env).map(([k, v]) => `{ key: ${s(k)}, value: ${s(v)} }`).join(", ");
   const base = `cloudType: __NUVEM__, gpuCount: 1, name: ${s(nome)}, imageName: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
-    containerDiskInGb: 180, minVcpuCount: 8, minMemoryInGb: 60, dockerArgs: ${s(cmd)}, ports: "", env: [${envs}, { key: "COM_VOLUME", value: "__VOL__" }]`;
+    containerDiskInGb: 300, minVcpuCount: 8, minMemoryInGb: 60, dockerArgs: ${s(cmd)}, ports: "", env: [${envs}, { key: "COM_VOLUME", value: "__VOL__" }]`;
   const tentativas = [];
   if (volume) for (const g of GPUS) tentativas.push({ g, extra: `, networkVolumeId: ${s(volume.id)}, volumeMountPath: "/workspace", dataCenterId: ${s(volume.dataCenterId)}`, vol: "1" });
   for (const g of GPUS) tentativas.push({ g, extra: ", volumeInGb: 0", vol: "0" });

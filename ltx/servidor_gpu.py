@@ -212,6 +212,26 @@ def gerar_clipe(motor, job):
             "modo": motor.modo, "seed": seed}, gpu_s
 
 
+def limpar_disco(minimo_gb=15):
+    """Se o disco do pod estiver quase cheio, apaga sobras (vídeos/imagens temporários e caches de pip/HF)."""
+    import shutil, glob
+    livre = shutil.disk_usage("/root").free / 2**30
+    if livre >= minimo_gb:
+        return
+    print(f"[servidor] disco com {livre:.1f} GB livres: limpando temporários", flush=True)
+    for padrao in ("/root/bruto-*.mp4", "/root/clipe-*.mp4", "/root/imagem-*.png", "/root/work/ref-*.png"):
+        for f in glob.glob(padrao):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    shutil.rmtree(os.path.expanduser("~/.cache/pip"), ignore_errors=True)
+    for x in glob.glob("/tmp/*"):
+        if os.path.isdir(x):
+            shutil.rmtree(x, ignore_errors=True)
+    print(f"[servidor] disco agora com {shutil.disk_usage('/root').free / 2**30:.1f} GB livres", flush=True)
+
+
 def baixar_imagem(url):
     from PIL import Image
     import io
@@ -269,12 +289,21 @@ def main():
 
     ociosa_desde = time.time()
     while True:
-        try:
-            r = api("jobs/pegar", {"tipos": ["clipe", "imagem_gpu"], "gpu": estado["gpu"], "pod_id": POD})
-        except Exception as e:  # noqa
-            print("[servidor] pegar falhou:", e, flush=True)
-            r = {}
-        job = r.get("job")
+        # Primeiro pede o tipo do modelo que já está carregado (evita trocar LTX<->Qwen a cada job, que custa
+        # minutos de GPU); só quando acabar esse tipo pede o outro.
+        atual = "imagem_gpu" if motor.tipo == "qwen" else "clipe"
+        job = None
+        for tipos in ([atual], ["clipe", "imagem_gpu"]):
+            try:
+                r = api("jobs/pegar", {"tipos": tipos, "gpu": estado["gpu"], "pod_id": POD})
+            except Exception as e:  # noqa
+                print("[servidor] pegar falhou:", e, flush=True)
+                r = {}
+            job = r.get("job")
+            if job:
+                break
+        if job:
+            limpar_disco()
         if not job:
             if estado["estado"] != "ociosa":
                 estado["estado"] = "ociosa"

@@ -3,6 +3,7 @@
 set -x
 export INICIO_POD=$(date +%s)
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PIP_NO_CACHE_DIR=1
 # preço real deste pod (para o custo de cada clipe)
 export CUSTO_HORA=$(curl -s "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" -H 'content-type: application/json' \
   -d "{\"query\":\"query { pod(input: {podId: \\\"${RUNPOD_POD_ID}\\\"}) { costPerHr } }\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["pod"]["costPerHr"])' 2>/dev/null || echo 0)
@@ -54,7 +55,7 @@ open(f"{base}/ltx/.ok", "w").write("ok")
 PY
 fi
 [ -f $BASE/ltx/.ok ] || { aviso "erro" "pesos do LTX não baixaram"; exit 1; }
-aviso "pesos" "Pesos prontos"
+aviso "pesos" "Pesos prontos; disco livre: $(df -h /root | tail -1 | awk '{print $4}')"
 
 curl -sL "https://raw.githubusercontent.com/franciscobrunopereirasantos-star/darkfactory/main/ltx/servidor_gpu.py" -o $BASE/servidor_gpu.py
 LTX_DIR=$BASE/ltx timeout 5h python -u $BASE/servidor_gpu.py > /root/servidor.log 2>&1
