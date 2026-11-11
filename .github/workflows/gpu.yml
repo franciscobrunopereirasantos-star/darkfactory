@@ -25,4 +25,7 @@ jobs:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VOLUME_DC: US-IL-1
+          # modo avulso: a fábrica pode pedir desligamento mais cedo (client_payload.ocioso_min); vazio = padrão 10 min
+          GPU_OCIOSA_MIN_PEDIDO: ${{ github.event.client_payload.ocioso_min }}
+          GPU_MODO: ${{ github.event.client_payload.modo }}
         run: node src/gpu.mjs
