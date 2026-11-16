@@ -247,7 +247,10 @@ def limpar_disco(minimo_gb=15):
     if livre >= minimo_gb:
         return
     print(f"[servidor] disco com {livre:.1f} GB livres: limpando temporários", flush=True)
-    for padrao in ("/root/bruto-*.mp4", "/root/clipe-*.mp4", "/root/imagem-*.png", "/root/work/ref-*.png"):
+    # Não apaga /root/imagem-*, bruto-* e clipe-*: são de entregas ainda em andamento na thread de fundo
+    # (apagar ali causava FileNotFoundError no envio e mandava a imagem para o fallback pago). Cada entrega
+    # já remove o próprio arquivo depois do upload.
+    for padrao in ("/root/work/ref-*.png",):
         for f in glob.glob(padrao):
             try:
                 os.remove(f)
