@@ -11,22 +11,25 @@ const ate = new Date().toISOString();
 const q = `bucketSize=day&startTime=${encodeURIComponent(desde)}&endTime=${encodeURIComponent(ate)}`;
 
 async function rest(caminho) {
-  const r = await fetchComRetry(`https://rest.runpod.io/v1/${caminho}`, { headers: { authorization: `Bearer ${KEY}` } });
+  const r = await fetchComRetry(`https://api.runpod.io/v2/${caminho}`, { headers: { authorization: `Bearer ${KEY}` } });
   if (!r.ok) throw new Error(`RunPod ${caminho} ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.json();
 }
 
 async function main() {
-  const pods = await rest(`billing/pods?${q}`);
-  const vols = await rest(`billing/networkvolumes?${q}`);
+  // API REST v2 (a v1 foi aposentada pela RunPod em 16/11/2026): resposta { records: [...], metadata }.
+  const pods = (await rest(`billing/pods?${q}`)).records || [];
+  let vols = [];
+  try { vols = (await rest(`billing/network-volumes?${q}`)).records || []; }
+  catch (e) { log("cobrança de volumes indisponível na v2, seguindo só com pods:", e.message); }
   const g = await (await fetchComRetry(`https://api.runpod.io/graphql?api_key=${KEY}`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ query: "query { myself { clientBalance } }" }),
   })).json();
   const dia = (t) => String(t).slice(0, 10);
   const itens = [
-    ...pods.map((p) => ({ data: dia(p.time), tipo: "pod", referencia: p.podId, valor_usd: Math.round(p.amount * 1e6) / 1e6, segundos: Math.round((p.timeBilledMs || 0) / 1000) })),
-    ...vols.map((v) => ({ data: dia(v.startDate), tipo: "volume", referencia: "volume", valor_usd: Math.round(v.amount * 1e6) / 1e6 })),
+    ...pods.map((p) => ({ data: dia(p.startTime ?? p.time), tipo: "pod", referencia: p.podId, valor_usd: Math.round(Number(p.totalAmount ?? p.amount ?? 0) * 1e6) / 1e6, segundos: Math.round((p.timeBilledMs || 0) / 1000) })),
+    ...vols.map((v) => ({ data: dia(v.startTime ?? v.startDate), tipo: "volume", referencia: "volume", valor_usd: Math.round(Number(v.totalAmount ?? v.amount ?? 0) * 1e6) / 1e6 })),
   ];
   const saldo = g.data?.myself?.clientBalance;
   const total = itens.reduce((s, i) => s + i.valor_usd, 0);
