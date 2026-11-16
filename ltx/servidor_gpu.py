@@ -291,6 +291,13 @@ def gerar_imagem(motor, job):
               generator=torch.Generator("cuda").manual_seed(seed))
     if refs:
         kw["image"] = refs
+    else:
+        # O Qwen-Image-Edit exige uma imagem de entrada: cena sem personagem/referência recebia image=None e
+        # quebrava (AttributeError ... 'NoneType' has no attribute 'size'), caindo no fallback pago. Usa uma tela
+        # neutra do tamanho pedido e manda o modelo criar a cena do zero sobre ela.
+        from PIL import Image
+        kw["image"] = [Image.new("RGB", (largura, altura), (128, 128, 128))]
+        kw["prompt"] = ("Replace the plain gray canvas entirely with a brand-new, fully detailed scene. " + prompt)
     t1 = time.time()
     img = motor.pipe(**kw).images[0]
     gpu_s = time.time() - t1
