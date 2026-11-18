@@ -223,6 +223,12 @@ def gerar_clipe(motor, job):
     dur = max(2.0, min(10.0, float(e.get("duracao_s") or 5)))
     seed = int(e.get("seed") or 1000)
     prompt = e.get("prompt_movimento") or e.get("prompt") or ""
+    # Voz nativa (padrão das novelas desde 18/11): o próprio LTX gera a fala junto com o vídeo (boca sincronizada).
+    nativa = bool(e.get("voz_nativa")) and bool(str(e.get("fala_texto") or "").strip())
+    if nativa:
+        prompt = (prompt.rstrip(". ") + ". Only this character speaks, in Brazilian Portuguese, with "
+                  + (e.get("voz_descricao") or "an expressive voice") + ", perfect lip sync, saying: \""
+                  + str(e["fala_texto"]).strip() + "\" Comedic soap-opera tone, quiet room ambience, no music.")
     quadros = round(dur * 24)
     gerar = 8 * math.ceil((quadros - 1) / 8) + 1
     vertical = e.get("aspecto") == "9:16"
@@ -272,7 +278,7 @@ def gerar_clipe(motor, job):
     for tentativa in range(3):
         try:
             try:
-                video, _a = motor.pipe(**kwargs)
+                video, audio_ltx = motor.pipe(**kwargs)
             except (TypeError, ValueError) as erro:
                 if not alta:
                     raise
@@ -282,7 +288,7 @@ def gerar_clipe(motor, job):
                     kwargs.pop(k, None)
                 kwargs.update(sigmas=DISTILLED_SIGMA_VALUES, **DESTILADO)
                 alta = False
-                video, _a = motor.pipe(**kwargs)
+                video, audio_ltx = motor.pipe(**kwargs)
             break
         except torch.OutOfMemoryError:
             torch.cuda.empty_cache()
@@ -292,15 +298,23 @@ def gerar_clipe(motor, job):
             raise
     gpu_s = time.time() - t1
     quadros_np = video[0]
-    del video
+    audio_np = audio_ltx[0].float().cpu() if (nativa and audio_ltx is not None) else None
+    taxa_audio = getattr(getattr(motor.pipe, "vocoder", None), "config", None)
+    taxa_audio = getattr(taxa_audio, "output_sampling_rate", 24000) if taxa_audio is not None else 24000
+    del video, audio_ltx
     modo = motor.modo
 
     def finalizar():
         bruto, final = f"/root/bruto-{job['id']}.mp4", f"/root/clipe-{job['id']}.mp4"
-        encode_video(quadros_np, fps=24, output_path=bruto)
+        if audio_np is not None:
+            encode_video(quadros_np, fps=24, audio=audio_np, audio_sample_rate=taxa_audio, output_path=bruto)
+        else:
+            encode_video(quadros_np, fps=24, output_path=bruto)
         escala = "720:1280" if h > w else "1280:720"
         subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-i", bruto, "-frames:v", str(quadros),
-                        "-vf", f"scale={escala}:flags=lanczos,setsar=1", "-r", "24", "-an", "-c:v", "libx264", "-crf", "16",
+                        "-vf", f"scale={escala}:flags=lanczos,setsar=1", "-r", "24",
+                        *(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"] if audio_np is not None else ["-an"]),
+                        "-c:v", "libx264", "-crf", "16",
                         "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", final], check=True)
         url = enviar(job["id"], final, "clipe.mp4")
         for f in (bruto, final):
@@ -310,7 +324,8 @@ def gerar_clipe(motor, job):
                 pass
         ew, eh = (int(x) for x in escala.split(":"))
         return {"url": url, "duracao_s": round(quadros / 24, 3), "largura": ew, "altura": eh, "quadros": quadros,
-                "modo": modo + ("+alta" if alta else ""), "seed": seed}
+                "modo": modo + ("+alta" if alta else "") + ("+voz" if audio_np is not None else ""), "seed": seed,
+                "tem_audio": audio_np is not None}
 
     return finalizar, gpu_s
 

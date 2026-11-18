@@ -46,6 +46,15 @@ export async function prepararHistoria(pedido, pasta) {
   const plano = [];
   for (let i = 0; i < cenas.length; i++) {
     const c = cenas[i];
+    if (c.voz_nativa && c.tipo !== "cartela") {
+      // Voz gerada pelo próprio LTX junto com o clipe (boca sincronizada): o áudio vem do clipe e a fala vira só legenda.
+      const d = Math.min(CLIPE_MAX + 0.5, Math.max(2, Number(c.duracao_clipe_s || c.duracao_s) || 5));
+      const falas = (c.falas || []).map((f) => ({ arquivo: null, nativa: true, dur: Math.max(0.5, d - 0.5), inicio: 0.25,
+        texto: f.texto || "", falante: f.falante || "" }));
+      plano.push({ id: String(c.id), n: nCena(c, i), tipo: "clipe", falas, durClipe: d, durCena: d, congelado: 0, voz_nativa: true,
+        imagem_url: c.imagem_url, prompt: c.prompt_movimento, clipe_url: c.clipe_url, clipePronto: !!c.clipe_url });
+      continue;
+    }
     const falas = [];
     for (let k = 0; k < (c.falas || []).length; k++) {
       const f = c.falas[k];
@@ -128,6 +137,17 @@ async function segmentoClipe(clipe, c, pasta, nome) {
 // Áudio da cena: 0,3 s de respiro, falas em sequência com 0,25 s entre elas, silêncio até o fim da cena.
 async function audioCena(c, pasta, nome) {
   const saida = path.join(pasta, `${nome}.wav`);
+  if (c.voz_nativa && c.arquivoClipe) {
+    try {
+      await ffmpeg(["-i", c.arquivoClipe, "-vn", "-af", "aresample=44100,apad", "-t", c.durCena.toFixed(3), "-ar", "44100", "-ac", "2", saida],
+        { timeoutMin: 3 });
+      return saida;
+    } catch (e) {
+      log(`cena ${c.id}: clipe sem áudio da voz nativa (${String(e.message).slice(0, 120)}); usando silêncio`);
+    }
+    await ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", c.durCena.toFixed(3), saida], { timeoutMin: 3 });
+    return saida;
+  }
   if (!c.falas.length) {
     await ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", c.durCena.toFixed(3), saida], { timeoutMin: 3 });
     return saida;
@@ -304,7 +324,12 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
       // Clipe gerado antes (API de geração) pode ter duração prevista por estimativa: com até 1 s de
       // diferença, a cena se ajusta ao clipe real (mais curto → congela o fim; mais longo → a cena cresce).
       const previsto = c.durClipe;
-      if (c.clipePronto && Math.abs(real - previsto) <= 1) {
+      if (c.voz_nativa) {
+        c.durClipe = c.durCena = Math.min(real, CLIPE_MAX + 0.5);
+        c.congelado = 0;
+        c.arquivoClipe = arq;
+        for (const f of c.falas) f.dur = Math.max(0.5, c.durCena - 0.5);
+      } else if (c.clipePronto && Math.abs(real - previsto) <= 1) {
         c.durClipe = Math.min(real, CLIPE_MAX + 0.5);
         if (!c.falas.length) c.durCena = c.durClipe; // sem fala: a cena acompanha o clipe
         c.congelado = Math.max(0, c.durCena - c.durClipe);
