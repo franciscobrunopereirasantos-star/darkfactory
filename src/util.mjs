@@ -9,10 +9,15 @@ export function log(...args) {
   console.log(`[fabrica ${new Date().toISOString().slice(11, 19)}]`, ...args);
 }
 
+const FFMPEG_TIMEOUT_MS = Number(process.env.FFMPEG_TIMEOUT_MIN || 12) * 60_000;
+
 export async function ffmpeg(args) {
   try {
-    await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], { maxBuffer: 64 * 1024 * 1024 });
+    // -nostdin: o execFile deixa o stdin aberto como pipe e o ffmpeg pode ficar esperando nele.
+    // timeout: um ffmpeg travado não pode segurar o worker até o limite de 50 min do Actions (F19).
+    await run("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", ...args], { maxBuffer: 64 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS, killSignal: "SIGKILL" });
   } catch (e) {
+    if (e.killed) throw new Error(`ffmpeg passou de ${FFMPEG_TIMEOUT_MS / 60000} min e foi interrompido: ${args.filter((a) => typeof a === "string" && a.length < 200).slice(-1)[0] || ""}`);
     throw new Error(`ffmpeg falhou: ${(e.stderr || e.message || "").toString().slice(0, 600)}`);
   }
 }
@@ -20,7 +25,7 @@ export async function ffmpeg(args) {
 // ffmpeg que devolve o stderr (para silencedetect/blackdetect)
 export async function ffmpegAnalise(args) {
   try {
-    const { stderr } = await run("ffmpeg", ["-hide_banner", "-nostats", ...args], { maxBuffer: 64 * 1024 * 1024 });
+    const { stderr } = await run("ffmpeg", ["-nostdin", "-hide_banner", "-nostats", ...args], { maxBuffer: 64 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS, killSignal: "SIGKILL" });
     return stderr.toString();
   } catch (e) {
     return (e.stderr || "").toString();

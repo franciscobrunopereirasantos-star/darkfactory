@@ -290,6 +290,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   for (let i = 0; i < plano.length; i++) {
     const c = plano[i];
     const nome = `cena-${String(i).padStart(3, "0")}`;
+    log(`montagem ${i + 1}/${plano.length}: cena ${c.id} (${c.tipo}, ${Number(c.durCena).toFixed(2)} s${c.congelado > 0.05 ? `, congela ${c.congelado.toFixed(2)} s` : ""})`);
     let seg;
     if (c.tipo === "cartela") {
       seg = await segmentoCartela(c.texto_cartela || "", c.durCena, pasta, nome);
