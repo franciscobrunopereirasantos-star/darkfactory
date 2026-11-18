@@ -1,7 +1,16 @@
 name: Teste do motor LTX (RunPod)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "script python do teste (pasta ltx)"
+        required: false
+        default: "narrador_teste.py"
+      pod_script:
+        description: "script do pod (pasta ltx)"
+        required: false
+        default: "pod.sh"
   push:
     branches: [main]
     paths: ["ltx/disparo.txt"]   # mudar este arquivo dispara um novo teste
@@ -29,6 +38,7 @@ jobs:
           PEDIDO_ID: 95513ccb-84a2-4405-aa52-28fec0a81a26
           MAX_MIN: "95"
           CENAS_ATIVAS: "ltx-fala-ptbr-t2v.mp4,ltx-macieira-i2v.mp4"
-          SCRIPT: narrador_teste.py
+          SCRIPT: ${{ inputs.script || 'narrador_teste.py' }}
+          POD_SCRIPT: ${{ inputs.pod_script || 'pod.sh' }}
           CENAS_CMP: "01,09,26,30"
         run: node ltx/deploy.mjs
