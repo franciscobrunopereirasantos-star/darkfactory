@@ -23,7 +23,12 @@ jobs:
         with:
           node-version: 22
       - name: Instalar FFmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null && ffmpeg -version | head -1
+        # apt às vezes trava no espelho do Ubuntu (18/11: 14 min parado aqui); limite + 2ª tentativa sem update
+        timeout-minutes: 6
+        run: |
+          timeout 240 sudo apt-get update -qq || true
+          timeout 240 sudo apt-get install -y -qq ffmpeg > /dev/null || timeout 120 sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null
+          ffmpeg -version | head -1
       - name: Rodar a fila
         env:
           FABRICA_URL: ${{ secrets.FABRICA_URL }}
