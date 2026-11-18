@@ -212,6 +212,75 @@ export async function trilhaComLoop(musica, d, pasta, nome) {
   return saida;
 }
 
+// ---------- Trilha por trecho + efeitos sonoros (Luma e Malu, 18/11) ----------
+// entrada.trilhas: [{ url, de: "<id cena>", ate: "<id cena>", volume_db? }] — cada trecho com a sua música,
+// troca com crossfade. entrada.efeitos: [{ cena, tipo, em_s?, volume_db? }] — efeitos sintetizados aqui.
+const XF_TRILHA = 1.2;
+export async function montarTrilhas(trilhas, tempos, total, pasta) {
+  const idx = (id) => tempos.findIndex((x) => String(x.cena) === String(id));
+  const partes = [];
+  for (let i = 0; i < trilhas.length; i++) {
+    const tr = trilhas[i];
+    const a = idx(tr.de), b = idx(tr.ate);
+    if (a < 0 || b < 0 || !tr.url) { log(`trilha ${i + 1}: cena ${tr.de}–${tr.ate} não encontrada; ignorada`); continue; }
+    const ini = i === 0 ? 0 : Math.max(0, tempos[a].inicio - XF_TRILHA / 2);
+    const fim = i === trilhas.length - 1 ? total : Math.min(total, tempos[b].fim + XF_TRILHA / 2);
+    const bruto = path.join(pasta, `trilha-${i}`);
+    await baixar(tr.url, bruto);
+    const d = fim - ini;
+    const loop = await trilhaComLoop(bruto, d + 0.5, pasta, `trilha-${i}`);
+    const saida = path.join(pasta, `trilha-${i}.wav`);
+    const fin = i === 0 ? 0.05 : XF_TRILHA, fout = i === trilhas.length - 1 ? 1.5 : XF_TRILHA;
+    const ms = Math.round(ini * 1000);
+    await ffmpeg(["-i", loop, "-af",
+      `atrim=0:${d.toFixed(3)},asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo,volume=${Number(tr.volume_db ?? 0)}dB,` +
+      `afade=t=in:st=0:d=${fin},afade=t=out:st=${Math.max(0, d - fout).toFixed(3)}:d=${fout},adelay=${ms}|${ms},apad`,
+      "-t", total.toFixed(3), "-ar", "44100", "-ac", "2", saida], { timeoutMin: 3 });
+    partes.push(saida);
+  }
+  if (!partes.length) return null;
+  if (partes.length === 1) return partes[0];
+  const saida = path.join(pasta, "trilhas.wav");
+  await ffmpeg([...partes.flatMap((x) => ["-i", x]), "-filter_complex",
+    `${partes.map((_, k) => `[${k}:a]`).join("")}amix=inputs=${partes.length}:normalize=0:duration=longest[t]`,
+    "-map", "[t]", "-t", total.toFixed(3), "-ar", "44100", "-ac", "2", saida], { timeoutMin: 3 });
+  return saida;
+}
+
+const SFX = {
+  plim: ["0.35*(sin(2*PI*2093*t)+0.6*sin(2*PI*3136*t))*exp(-7*t)", 0.7],
+  ding: ["0.4*(sin(2*PI*1318.5*t)+0.5*sin(2*PI*2637*t))*exp(-4*t)", 1.0],
+  tuc: ["0.9*sin(2*PI*(140-60*t)*t)*exp(-28*t)", 0.18],
+  pop: ["0.6*sin(2*PI*(350+2600*t)*t)*exp(-22*t)", 0.16],
+  plunc: ["0.45*sin(2*PI*(520-380*t)*t)*exp(-2.5*t)", 0.9],
+  passos: ["0.5*sin(2*PI*110*t)*(exp(-30*mod(t,0.32)))*lt(t,1.28)", 1.3],
+  assinatura: ["0.35*(sin(2*PI*523.25*t)*exp(-5*t)*lt(t,0.3)+sin(2*PI*659.25*(t-0.3))*exp(-5*(t-0.3))*gte(t,0.3)*lt(t,0.6)+sin(2*PI*783.99*(t-0.6))*exp(-3*(t-0.6))*gte(t,0.6))", 1.8],
+};
+
+export async function montarEfeitos(efeitos, tempos, total, pasta) {
+  const partes = [];
+  for (let i = 0; i < efeitos.length; i++) {
+    const ef = efeitos[i];
+    const def = SFX[ef.tipo];
+    const cena = tempos.find((x) => String(x.cena) === String(ef.cena));
+    if (!def || !cena) { log(`efeito ${ef.tipo} na cena ${ef.cena}: não encontrado; ignorado`); continue; }
+    const t0 = Math.max(0, cena.inicio + Number(ef.em_s ?? 0.1));
+    const ms = Math.round(t0 * 1000);
+    const saida = path.join(pasta, `sfx-${i}.wav`);
+    await ffmpeg(["-f", "lavfi", "-i", `aevalsrc='${def[0]}':s=44100:d=${def[1]}`, "-af",
+      `volume=${Number(ef.volume_db ?? -6)}dB,aformat=channel_layouts=stereo,adelay=${ms}|${ms},apad`,
+      "-t", total.toFixed(3), "-ar", "44100", "-ac", "2", saida], { timeoutMin: 2 });
+    partes.push(saida);
+  }
+  if (!partes.length) return null;
+  const saida = path.join(pasta, "efeitos.wav");
+  if (partes.length === 1) { fs.copyFileSync(partes[0], saida); return saida; }
+  await ffmpeg([...partes.flatMap((x) => ["-i", x]), "-filter_complex",
+    `${partes.map((_, k) => `[${k}:a]`).join("")}amix=inputs=${partes.length}:normalize=0:duration=longest[e]`,
+    "-map", "[e]", "-t", total.toFixed(3), "-ar", "44100", "-ac", "2", saida], { timeoutMin: 3 });
+  return saida;
+}
+
 // Voz + música com ducking + loudness -14 LUFS.
 async function mixarAudio(voz, musicaUrl, musicaDb, pasta, nome) {
   const saida = path.join(pasta, `${nome}-mix.wav`);
@@ -219,8 +288,9 @@ async function mixarAudio(voz, musicaUrl, musicaDb, pasta, nome) {
     await ffmpeg(["-i", voz, "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", "44100", "-ac", "2", saida]);
     return saida;
   }
-  const musica = path.join(pasta, "musica");
-  if (!fs.existsSync(musica)) await baixar(musicaUrl, musica);
+  const local = !/^https?:/i.test(musicaUrl) && fs.existsSync(musicaUrl);
+  const musica = local ? musicaUrl : path.join(pasta, "musica");
+  if (!local && !fs.existsSync(musica)) await baixar(musicaUrl, musica);
   const d = await duracao(voz);
   const trilha = await trilhaComLoop(musica, d, pasta, nome);
   await ffmpeg([
@@ -349,7 +419,20 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   const video = path.join(pasta, "historia-v.mp4"), voz = path.join(pasta, "historia-a.wav");
   await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(segs, "v.txt"), "-c", "copy", video]);
   await ffmpeg(["-f", "concat", "-safe", "0", "-i", lista(auds, "a.txt"), "-c", "copy", voz]);
-  const mix = await mixarAudio(voz, e.musica_url, Number(e.musica_volume ?? -20), pasta, "historia");
+  let vozFx = voz, musicaPrincipal = e.musica_url;
+  if (Array.isArray(e.efeitos) && e.efeitos.length) {
+    const fx = await montarEfeitos(e.efeitos, tempos, t, pasta);
+    if (fx) {
+      vozFx = path.join(pasta, "historia-a-fx.wav");
+      await ffmpeg(["-i", voz, "-i", fx, "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0:duration=first[s]", "-map", "[s]",
+        "-ar", "44100", "-ac", "2", vozFx], { timeoutMin: 3 });
+    }
+  }
+  if (Array.isArray(e.trilhas) && e.trilhas.length) {
+    const tr = await montarTrilhas(e.trilhas, tempos, t, pasta);
+    if (tr) musicaPrincipal = tr;
+  }
+  const mix = await mixarAudio(vozFx, musicaPrincipal, Number(e.musica_volume ?? -20), pasta, "historia");
   const ass = path.join(pasta, "historia.ass");
   fs.writeFileSync(ass, vertical ? arquivoAss(legendas, W, H, 64, 520) : arquivoAss(legendas, W, H, 48, 36));
   const final = path.join(pasta, "video.mp4");
