@@ -190,8 +190,25 @@ def gerar_clipe(motor, job):
     quadros = round(dur * 24)
     gerar = 8 * math.ceil((quadros - 1) / 8) + 1
     vertical = e.get("aspecto") == "9:16"
-    kwargs = dict(prompt=prompt, num_frames=gerar, frame_rate=24.0, sigmas=DISTILLED_SIGMA_VALUES,
-                  generator=torch.Generator("cuda").manual_seed(seed), output_type="np", return_dict=False, **DESTILADO)
+    # Qualidade "alta" (só a novela das frutinhas, por decisão do Francisco em 18/11): amostragem completa do LTX
+    # (mais passos, guidance e STG nos padrões do pipeline) em vez do atalho destilado de 8 passos. 4–6x mais lenta.
+    alta = str(e.get("qualidade") or "").lower() == "alta"
+    kwargs = dict(prompt=prompt, num_frames=gerar, frame_rate=24.0,
+                  generator=torch.Generator("cuda").manual_seed(seed), output_type="np", return_dict=False)
+    if alta:
+        kwargs.update(num_inference_steps=int(e.get("passos") or os.environ.get("LTX_PASSOS_ALTA", "40")))
+        if e.get("negative_prompt") or os.environ.get("LTX_NEGATIVO_ALTA"):
+            kwargs["negative_prompt"] = e.get("negative_prompt") or os.environ["LTX_NEGATIVO_ALTA"]
+        batida = {"t": time.time()}
+
+        def a_cada_passo(pipe, i, t, cb_kwargs):
+            # mantém o sinal "gerando na ..." vivo: um clipe alto leva 10–20 min e o tick religa a GPU após 15 min sem sinal
+            if time.time() - batida["t"] > 90:
+                batida["t"] = time.time()
+                progresso(job["id"], f"gerando na {estado['gpu']} (qualidade alta, passo {i + 1}/{kwargs['num_inference_steps']})")
+            return {}
+    else:
+        kwargs.update(sigmas=DISTILLED_SIGMA_VALUES, **DESTILADO)
     if e.get("imagem_url"):
         img = load_image(e["imagem_url"]).convert("RGB")
         img = ajustar_orientacao(img, e.get("aspecto"))
@@ -204,10 +221,28 @@ def gerar_clipe(motor, job):
         w, h = (768, 1376) if vertical else (1376, 768)
         motor.carregar("t2v")
         kwargs.update(width=w, height=h)
+    if alta and "callback_on_step_end" not in kwargs:
+        try:
+            import inspect
+            if "callback_on_step_end" in inspect.signature(motor.pipe.__call__).parameters:
+                kwargs["callback_on_step_end"] = a_cada_passo
+        except Exception:  # noqa
+            pass
     t1 = time.time()
     for tentativa in range(3):
         try:
-            video, _a = motor.pipe(**kwargs)
+            try:
+                video, _a = motor.pipe(**kwargs)
+            except (TypeError, ValueError) as erro:
+                if not alta:
+                    raise
+                # se o modo alto não for aceito por este checkpoint, entrega no modo rápido em vez de falhar
+                progresso(job["id"], f"qualidade alta recusada ({str(erro)[:200]}): gerando no modo rápido")
+                for k in ("num_inference_steps", "negative_prompt", "callback_on_step_end"):
+                    kwargs.pop(k, None)
+                kwargs.update(sigmas=DISTILLED_SIGMA_VALUES, **DESTILADO)
+                alta = False
+                video, _a = motor.pipe(**kwargs)
             break
         except torch.OutOfMemoryError:
             torch.cuda.empty_cache()
@@ -235,7 +270,7 @@ def gerar_clipe(motor, job):
                 pass
         ew, eh = (int(x) for x in escala.split(":"))
         return {"url": url, "duracao_s": round(quadros / 24, 3), "largura": ew, "altura": eh, "quadros": quadros,
-                "modo": modo, "seed": seed}
+                "modo": modo + ("+alta" if alta else ""), "seed": seed}
 
     return finalizar, gpu_s
 
