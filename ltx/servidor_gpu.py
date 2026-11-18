@@ -102,12 +102,32 @@ class Motor:
         if tipo == "qwen":
             return self.carregar_qwen()
         from diffusers import LTX2ImageToVideoPipeline, LTX2Pipeline
-        cls = LTX2ImageToVideoPipeline if tipo == "i2v" else LTX2Pipeline
+        cls = LTX2ImageToVideoPipeline if tipo.startswith("i2v") else LTX2Pipeline
         try:
             self.pipe = cls.from_pretrained(MODELO, dtype=torch.bfloat16)
         except TypeError:
             self.pipe = cls.from_pretrained(MODELO, torch_dtype=torch.bfloat16)
         self.modo = "bf16"
+        if tipo.endswith("_alta"):
+            # Qualidade alta: troca o transformer destilado (padrão do repositório) pelo completo (transformer_full),
+            # que é o feito para 40 passos com guidance. Baixa na 1ª vez (não vem no download padrão do pod).
+            completo = os.path.join(MODELO, "transformer_full")
+            if not os.path.isfile(os.path.join(completo, ".ok")):
+                from huggingface_hub import snapshot_download
+                t = time.time()
+                snapshot_download("Lightricks/LTX-2.5-Diffusers", local_dir=MODELO, allow_patterns=["transformer_full/*"],
+                                  token=os.environ.get("HF_TOKEN") or None)
+                open(os.path.join(completo, ".ok"), "w").write("ok")
+                print(f"[servidor] transformer_full baixado em {time.time() - t:.0f} s", flush=True)
+            tcls = type(self.pipe.transformer)
+            antigo = self.pipe.transformer
+            try:
+                novo = tcls.from_pretrained(MODELO, subfolder="transformer_full", dtype=torch.bfloat16)
+            except TypeError:
+                novo = tcls.from_pretrained(MODELO, subfolder="transformer_full", torch_dtype=torch.bfloat16)
+            self.pipe.transformer = novo
+            del antigo
+            self.modo = "bf16-completo"
         if self.vram < 70:
             try:
                 self.pipe.transformer.enable_layerwise_casting(storage_dtype=torch.float8_e4m3fn, compute_dtype=torch.bfloat16)
@@ -178,6 +198,22 @@ class Motor:
         return True
 
 
+def carregar_motor(motor, base, alta, job):
+    """Carrega o pipeline; no modo alto usa o transformer completo. Se não der, volta para o rápido (e avisa)."""
+    if alta:
+        try:
+            if motor.tipo != base + "_alta":
+                progresso(job["id"], f"gerando na {estado['gpu']} (qualidade alta: carregando o transformer completo do LTX)")
+            motor.carregar(base + "_alta")
+            return True
+        except Exception as erro:  # noqa
+            progresso(job["id"], f"qualidade alta indisponível ({str(erro)[:200]}): gerando no modo rápido")
+            motor.pipe, motor.tipo = None, None
+            torch.cuda.empty_cache()
+    motor.carregar(base)
+    return False
+
+
 def gerar_clipe(motor, job):
     from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
     from diffusers.utils import encode_video, load_image
@@ -215,12 +251,16 @@ def gerar_clipe(motor, job):
         w, h = tamanho_ltx(*img.size)
         if (w, h) != img.size:
             img = img.resize((w, h))
-        motor.carregar("i2v")
+        alta = carregar_motor(motor, "i2v", alta, job)
         kwargs.update(image=img, width=w, height=h)
     else:
         w, h = (768, 1376) if vertical else (1376, 768)
-        motor.carregar("t2v")
+        alta = carregar_motor(motor, "t2v", alta, job)
         kwargs.update(width=w, height=h)
+    if not alta and "num_inference_steps" in kwargs:  # caiu para o rápido ao carregar
+        for k in ("num_inference_steps", "negative_prompt"):
+            kwargs.pop(k, None)
+        kwargs.update(sigmas=DISTILLED_SIGMA_VALUES, **DESTILADO)
     if alta and "callback_on_step_end" not in kwargs:
         try:
             import inspect
