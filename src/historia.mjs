@@ -129,7 +129,7 @@ async function segmentoClipe(clipe, c, pasta, nome) {
 async function audioCena(c, pasta, nome) {
   const saida = path.join(pasta, `${nome}.wav`);
   if (!c.falas.length) {
-    await ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", c.durCena.toFixed(3), saida]);
+    await ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", c.durCena.toFixed(3), saida], { timeoutMin: 3 });
     return saida;
   }
   const args = [], partes = [];
@@ -142,9 +142,11 @@ async function audioCena(c, pasta, nome) {
     t += f.dur + ENTRE_FALAS;
   });
   const mix = c.falas.map((_, k) => `[a${k}]`).join("");
+  // Corte pelo -t de saída (e não por atrim depois do apad): com apad infinito o atrim às vezes não
+  // encerra o grafo e o ffmpeg fica rodando sem fim (F19, História Netflix cena 31).
   await ffmpeg([...args, "-filter_complex",
-    `${partes.join(";")};${mix}amix=inputs=${c.falas.length}:normalize=0,apad,atrim=0:${c.durCena.toFixed(3)}[s]`,
-    "-map", "[s]", "-ar", "44100", "-ac", "2", saida]);
+    `${partes.join(";")};${mix}amix=inputs=${c.falas.length}:duration=longest:normalize=0,apad[s]`,
+    "-map", "[s]", "-t", c.durCena.toFixed(3), "-ar", "44100", "-ac", "2", saida], { timeoutMin: 3 });
   return saida;
 }
 

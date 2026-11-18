@@ -11,13 +11,14 @@ export function log(...args) {
 
 const FFMPEG_TIMEOUT_MS = Number(process.env.FFMPEG_TIMEOUT_MIN || 12) * 60_000;
 
-export async function ffmpeg(args) {
+export async function ffmpeg(args, { timeoutMin } = {}) {
+  const limite = timeoutMin ? timeoutMin * 60_000 : FFMPEG_TIMEOUT_MS;
   try {
     // -nostdin: o execFile deixa o stdin aberto como pipe e o ffmpeg pode ficar esperando nele.
     // timeout: um ffmpeg travado não pode segurar o worker até o limite de 50 min do Actions (F19).
-    await run("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", ...args], { maxBuffer: 64 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS, killSignal: "SIGKILL" });
+    await run("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", ...args], { maxBuffer: 64 * 1024 * 1024, timeout: limite, killSignal: "SIGKILL" });
   } catch (e) {
-    if (e.killed) throw new Error(`ffmpeg passou de ${FFMPEG_TIMEOUT_MS / 60000} min e foi interrompido: ${args.filter((a) => typeof a === "string" && a.length < 200).slice(-1)[0] || ""}`);
+    if (e.killed) throw new Error(`ffmpeg passou de ${limite / 60000} min e foi interrompido: ${args.filter((a) => typeof a === "string" && a.length < 200).slice(-1)[0] || ""}`);
     throw new Error(`ffmpeg falhou: ${(e.stderr || e.message || "").toString().slice(0, 600)}`);
   }
 }
