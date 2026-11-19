@@ -1,0 +1,37 @@
+name: Juntar vídeos (vinheta + episódio)
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: "URLs dos vídeos, separadas por espaço, na ordem"
+        required: true
+      nome:
+        description: "Nome do arquivo final"
+        default: "juntado.mp4"
+      pedido_id:
+        description: "Pedido da fábrica onde guardar o resultado"
+        default: "1680e5d2-169b-4791-b497-e55cf8e89be5"
+
+jobs:
+  juntar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar FFmpeg
+        timeout-minutes: 6
+        run: |
+          timeout 240 sudo apt-get update -qq || true
+          timeout 240 sudo apt-get install -y -qq ffmpeg > /dev/null || timeout 120 sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null
+      - name: Juntar e enviar
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: ${{ inputs.pedido_id }}
+          NOME: ${{ inputs.nome }}
+          URLS: ${{ inputs.urls }}
+        run: node vinheta/juntar.mjs $URLS
