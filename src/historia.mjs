@@ -461,6 +461,25 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   const shortUrl = cortes.find((c) => c.id === "short")?.url ?? cortes[0]?.url ?? null;
   const confShort = { resultado: { duracao_seg: cortes.find((c) => c.url === shortUrl)?.duracao_seg } };
 
+  // vinheta da série no início (só 16:9): vem do pedido como abertura_url; a conferência acima é do episódio
+  if (e.abertura_url && !vertical && conf.status !== "falhou") {
+    try {
+      const ab = path.join(pasta, "abertura.mp4"), comAb = path.join(pasta, "video-com-abertura.mp4");
+      await baixar(e.abertura_url, ab);
+      await ffmpeg(["-i", ab, "-i", final, "-filter_complex",
+        `[0:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p,setsar=1[v0];` +
+        `[1:v]scale=${W}:${H},fps=30,format=yuv420p,setsar=1[v1];` +
+        `[0:a]aresample=48000,aformat=channel_layouts=stereo[a0];[1:a]aresample=48000,aformat=channel_layouts=stereo[a1];` +
+        `[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`,
+        "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", comAb], { timeoutMin: 8 });
+      fs.renameSync(comAb, final);
+      regras.push({ regra: "vinheta_inicio", ok: true, detalhe: `vinheta de ${(await duracao(ab)).toFixed(1)} s adicionada` });
+    } catch (err) {
+      regras.push({ regra: "vinheta_inicio", ok: false, detalhe: String(err?.message || err).slice(0, 300) });
+    }
+  }
+
   const falhas = regras.filter((r) => !r.ok);
   const graves = conf.status === "falhou";
   const status = graves ? "falhou" : falhas.length ? "revisar" : "pronto";
