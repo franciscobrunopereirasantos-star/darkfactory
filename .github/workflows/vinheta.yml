@@ -15,6 +15,9 @@ on:
       musica:
         description: "Música da vinheta — URL"
         default: "https://www.getdarkfactory.com/api/public/fabrica/arquivo/geracao/4b5a4b86-59ec-472b-a592-5db04ecf55ae/musica.mp3"
+      pedido_id:
+        description: "Pedido da fábrica onde guardar o resultado"
+        default: "1680e5d2-169b-4791-b497-e55cf8e89be5"
       m1:
         description: "Corte rápido 1 — URL"
         default: "https://www.getdarkfactory.com/api/public/fabrica/arquivo/geracao/e2f89e6a-4ba6-4eff-b1ac-b4dd47283cd8/clipe.mp4"
@@ -78,6 +81,12 @@ jobs:
           npx hyperframes render -q delivery -o ../saida/vinheta-luma-e-malu.mp4
           npx hyperframes audio ../saida/vinheta-luma-e-malu.mp4 --json > ../saida/audio.json || true
           ls -la ../saida
+      - name: Enviar para a fábrica
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: ${{ inputs.pedido_id }}
+        run: node vinheta/enviar.mjs vinheta/saida
       - uses: actions/upload-artifact@v4
         with:
           name: vinheta
