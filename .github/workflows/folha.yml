@@ -1,0 +1,37 @@
+name: Folha de contato
+on:
+  workflow_dispatch:
+    inputs:
+      itens:
+        description: "Itens ROTULO|URL separados por ;"
+        required: true
+      nome:
+        description: "Nome do arquivo (minúsculas)"
+        default: "folha.jpg"
+      pedido_id:
+        description: "Pedido da fábrica"
+        default: "1680e5d2-169b-4791-b497-e55cf8e89be5"
+jobs:
+  folha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Montar
+        env:
+          ITENS: ${{ inputs.itens }}
+          NOME: ${{ inputs.nome }}
+        run: |
+          pip install -q pillow
+          mkdir -p saida
+          IFS=';' read -ra A <<< "$ITENS"
+          python3 ferramentas/folha.py "saida/$NOME" "${A[@]}"
+      - name: Enviar
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: ${{ inputs.pedido_id }}
+        run: node ferramentas/subir.mjs saida
