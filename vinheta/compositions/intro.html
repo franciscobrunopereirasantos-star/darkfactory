@@ -1,0 +1,62 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; }
+    #intro-cena { position: absolute; inset: 0; }
+    #intro-fundo {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 50% 60%, #fff4dc 0%, #ffd9a0 55%, #f2b56b 100%);
+    }
+    .intro-pe { position: absolute; width: 210px; height: 294px; }
+    #intro-pe1 { left: 560px; top: 520px; }
+    #intro-pe2 { left: 855px; top: 330px; }
+    #intro-pe3 { left: 1150px; top: 450px; }
+    .intro-brilho {
+      position: absolute; width: 26px; height: 26px; border-radius: 50%;
+      background: radial-gradient(circle, #ffffff 0%, rgba(255,255,255,0) 70%);
+    }
+    #intro-b1 { left: 560px; top: 330px; }
+    #intro-b2 { left: 1260px; top: 360px; }
+    #intro-b3 { left: 980px; top: 760px; }
+    #intro-b4 { left: 760px; top: 800px; }
+  </style>
+  <div id="root" data-composition-id="intro" data-width="1920" data-height="1080">
+    <div id="intro-cena">
+    <div id="intro-fundo"></div>
+    <svg id="intro-pe1" class="intro-pe" viewBox="0 0 150 210">
+      <ellipse cx="75" cy="135" rx="48" ry="68" fill="#d9952f"/>
+      <circle cx="38" cy="48" r="15" fill="#d9952f"/><circle cx="66" cy="30" r="16" fill="#d9952f"/>
+      <circle cx="96" cy="32" r="14" fill="#d9952f"/><circle cx="120" cy="52" r="12" fill="#d9952f"/>
+    </svg>
+    <svg id="intro-pe2" class="intro-pe" viewBox="0 0 150 210">
+      <ellipse cx="75" cy="135" rx="48" ry="68" fill="#d9952f"/>
+      <circle cx="30" cy="52" r="12" fill="#d9952f"/><circle cx="54" cy="32" r="14" fill="#d9952f"/>
+      <circle cx="84" cy="30" r="16" fill="#d9952f"/><circle cx="112" cy="48" r="15" fill="#d9952f"/>
+    </svg>
+    <svg id="intro-pe3" class="intro-pe" viewBox="0 0 150 210">
+      <ellipse cx="75" cy="135" rx="48" ry="68" fill="#d9952f"/>
+      <circle cx="38" cy="48" r="15" fill="#d9952f"/><circle cx="66" cy="30" r="16" fill="#d9952f"/>
+      <circle cx="96" cy="32" r="14" fill="#d9952f"/><circle cx="120" cy="52" r="12" fill="#d9952f"/>
+    </svg>
+    <div id="intro-b1" class="intro-brilho"></div>
+    <div id="intro-b2" class="intro-brilho"></div>
+    <div id="intro-b3" class="intro-brilho"></div>
+    <div id="intro-b4" class="intro-brilho"></div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const pes = ["#intro-pe1", "#intro-pe2", "#intro-pe3"];
+    pes.forEach((p, i) => {
+      const t = i * 0.32;
+      tl.fromTo(p, { opacity: i === 0 ? 1 : 0, scale: i === 0 ? 1 : 1.6, rotation: i % 2 ? 12 : -12 },
+        { opacity: 1, scale: 1, rotation: i % 2 ? 8 : -8, duration: 0.28, ease: "back.out(2)" }, t);
+    });
+    ["#intro-b1", "#intro-b2", "#intro-b3", "#intro-b4"].forEach((b, i) => {
+      tl.fromTo(b, { opacity: 0, scale: 0.2 }, { opacity: 1, scale: 2.2, duration: 0.35, ease: "expo.out" }, 0.3 + i * 0.22);
+      tl.to(b, { opacity: 0, duration: 0.25, ease: "power2.in" }, 0.75 + i * 0.22);
+    });
+    // saída: o mundo do jardim aparece por trás — o intro some com desfoque
+    tl.to("#intro-cena", { opacity: 0, filter: "blur(10px)", scale: 1.08, duration: 0.3, ease: "power3.in" }, 1.25);
+    window.__timelines["intro"] = tl;
+  </script>
+</template>

@@ -1,0 +1,85 @@
+name: Vinheta Luma e Malu
+
+on:
+  workflow_dispatch:
+    inputs:
+      v1:
+        description: "Clipe v1 (Malu entrando) — URL"
+        required: true
+      v2:
+        description: "Clipe v2 (Luma pulando) — URL"
+        required: true
+      v3:
+        description: "Clipe v3 (as duas: Luma e Malu!) — URL"
+        required: true
+      musica:
+        description: "Música da vinheta — URL"
+        default: "https://www.getdarkfactory.com/api/public/fabrica/arquivo/geracao/4b5a4b86-59ec-472b-a592-5db04ecf55ae/musica.mp3"
+      m1:
+        description: "Corte rápido 1 — URL"
+        default: "https://www.getdarkfactory.com/api/public/fabrica/arquivo/geracao/e2f89e6a-4ba6-4eff-b1ac-b4dd47283cd8/clipe.mp4"
+      m2:
+        description: "Corte rápido 2 — URL"
+        default: "https://www.getdarkfactory.com/api/public/fabrica/arquivo/geracao/f8d478c5-4c19-4942-87e0-2f363982afd9/clipe.mp4"
+      m3:
+        description: "Corte rápido 3 — URL"
+        default: "https://www.getdarkfactory.com/api/public/fabrica/arquivo/geracao/32f8c5c1-71f6-42ea-9602-b16e726e6768/clipe.mp4"
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar FFmpeg
+        timeout-minutes: 6
+        run: |
+          timeout 240 sudo apt-get update -qq || true
+          timeout 240 sudo apt-get install -y -qq ffmpeg > /dev/null || timeout 120 sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null
+          ffmpeg -version | head -1
+      - name: Baixar mídia da fábrica
+        env:
+          V1: ${{ inputs.v1 }}
+          V2: ${{ inputs.v2 }}
+          V3: ${{ inputs.v3 }}
+          MUSICA: ${{ inputs.musica }}
+          M1: ${{ inputs.m1 }}
+          M2: ${{ inputs.m2 }}
+          M3: ${{ inputs.m3 }}
+        run: |
+          B=vinheta/build; mkdir -p $B/assets
+          cp vinheta/package.json vinheta/hyperframes.json vinheta/meta.json $B/
+          baixa() { curl -fsSL --retry 3 -o "$B/assets/$1" "$2"; echo "$1 $(stat -c %s "$B/assets/$1") bytes"; }
+          baixa v1.mp4 "$V1"; baixa v2.mp4 "$V2"; baixa v3.mp4 "$V3"
+          baixa m1.mp4 "$M1"; baixa m2.mp4 "$M2"; baixa m3.mp4 "$M3"; baixa musica.mp3 "$MUSICA"
+          ffmpeg -nostdin -y -loglevel error -sseof -0.08 -i $B/assets/v3.mp4 -frames:v 1 $B/assets/v3-ultimo.png
+          bash vinheta/efeitos.sh $B/assets
+      - name: Montar composição
+        run: node vinheta/montar.mjs "$PWD/vinheta/build"
+      - name: Instalar HyperFrames
+        working-directory: vinheta/build
+        run: |
+          npm install --no-audit --no-fund
+          cp node_modules/gsap/dist/gsap.min.js assets/
+          npx hyperframes telemetry disable || true
+          npx hyperframes browser ensure
+      - name: Conferir e tirar quadros
+        working-directory: vinheta/build
+        run: |
+          npx hyperframes check || echo "check com avisos"
+          npx hyperframes snapshot --at 0.3,1.2,2.4,3.4,5.2,6.4,8.4,9.2,10.4,12.4,13.6,14.8 -o ../saida/quadros || true
+      - name: Renderizar
+        working-directory: vinheta/build
+        run: |
+          mkdir -p ../saida
+          npx hyperframes render -q delivery -o ../saida/vinheta-luma-e-malu.mp4
+          npx hyperframes audio ../saida/vinheta-luma-e-malu.mp4 --json > ../saida/audio.json || true
+          ls -la ../saida
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vinheta
+          path: vinheta/saida
+          retention-days: 2

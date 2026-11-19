@@ -1,0 +1,37 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; }
+    #malu-placa {
+      position: absolute; right: 230px; top: 300px;
+      padding: 18px 64px 26px; border-radius: 120px;
+      background: #8457c0; border: 10px solid #ffffff;
+      box-shadow: 0 14px 0 rgba(90, 50, 140, 0.35);
+      display: flex; gap: 4px;
+    }
+    .malu-letra {
+      display: inline-block; font-family: "Nunito", sans-serif; font-weight: 900;
+      font-size: 190px; line-height: 1; color: #ffffff;
+      text-shadow: 0 8px 0 rgba(80, 40, 130, 0.45);
+    }
+  </style>
+  <div id="root" data-composition-id="nome-malu" data-width="1920" data-height="1080">
+    <div id="malu-placa">
+      <span id="malu-l1" class="malu-letra">M</span>
+      <span id="malu-l2" class="malu-letra">a</span>
+      <span id="malu-l3" class="malu-letra">l</span>
+      <span id="malu-l4" class="malu-letra">u</span>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // a placa chega de baixo com mola de desenho animado; as letras pulam uma a uma
+    tl.fromTo("#malu-placa", { y: 420, scale: 0.4, rotation: -10, opacity: 0 },
+      { y: 0, scale: 1, rotation: -4, opacity: 1, duration: 0.55, ease: "back.out(1.8)" }, 0);
+    ["#malu-l1", "#malu-l2", "#malu-l3", "#malu-l4"].forEach((l, i) => {
+      tl.fromTo(l, { y: 60, scale: 0.3 }, { y: 0, scale: 1, duration: 0.32, ease: "back.out(3)" }, 0.18 + i * 0.08);
+    });
+    // saída curta, para cima
+    tl.to("#malu-placa", { y: -80, scale: 0.85, opacity: 0, filter: "blur(8px)", duration: 0.22, ease: "power3.in" }, "{{SAIDA}}");
+    window.__timelines["nome-malu"] = tl;
+  </script>
+</template>

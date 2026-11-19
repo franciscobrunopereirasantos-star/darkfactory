@@ -1,0 +1,9 @@
+{
+  "name": "vinheta-luma-e-malu",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "hyperframes": "0.9.13",
+    "gsap": "3.15.0"
+  }
+}
