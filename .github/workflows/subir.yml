@@ -1,0 +1,29 @@
+name: Subir arquivos para a fábrica
+on:
+  workflow_dispatch:
+    inputs:
+      pasta:
+        description: "Pasta do repositório com os arquivos"
+        required: true
+      pedido_id:
+        description: "Pedido da fábrica onde guardar"
+        default: "1680e5d2-169b-4791-b497-e55cf8e89be5"
+      prefixo:
+        description: "Prefixo dos nomes"
+        default: ""
+jobs:
+  subir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enviar
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: ${{ inputs.pedido_id }}
+          PREFIXO: ${{ inputs.prefixo }}
+        run: node ferramentas/subir.mjs "${{ inputs.pasta }}"
