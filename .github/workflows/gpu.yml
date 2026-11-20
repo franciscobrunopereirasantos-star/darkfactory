@@ -25,6 +25,9 @@ jobs:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VOLUME_DC: US-IL-1
+          # 20/11: A6000/A40 (Ampere) caíram logo após o 1º clipe; L40S comunitária às vezes sai a US$1,09
+          GPU_EXCLUIR: "NVIDIA RTX A6000,NVIDIA A40"
+          GPU_PRECO_MAX: "1.15"
           # modo avulso: a fábrica pode pedir desligamento mais cedo (client_payload.ocioso_min); vazio = padrão 10 min
           GPU_OCIOSA_MIN_PEDIDO: ${{ github.event.client_payload.ocioso_min }}
           GPU_MODO: ${{ github.event.client_payload.modo }}

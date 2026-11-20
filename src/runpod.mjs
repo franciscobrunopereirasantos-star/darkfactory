@@ -55,7 +55,9 @@ export async function ligarPod({ nome, cmd, env, volume }) {
   const base = `cloudType: __NUVEM__, gpuCount: 1, name: ${s(nome)}, imageName: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
     containerDiskInGb: 200, minVcpuCount: 8, minMemoryInGb: 60, dockerArgs: ${s(cmd)}, ports: "", env: [${envs}, { key: "COM_VOLUME", value: "__VOL__" }]`;
   const tentativas = [];
-  const baratas = GPUS.filter((g) => g.preco <= PRECO_MAX);
+  // GPU_EXCLUIR: placas a não tentar (separadas por vírgula). 20/11: as A6000 caíram 4x seguidas ~3–6 min após o 1º clipe.
+  const excluir = (process.env.GPU_EXCLUIR || "").split(",").map((x) => x.trim()).filter(Boolean);
+  const baratas = GPUS.filter((g) => g.preco <= PRECO_MAX && !excluir.includes(g.id));
   if (volume) for (const g of baratas) tentativas.push({ g, extra: `, networkVolumeId: ${s(volume.id)}, volumeMountPath: "/workspace", dataCenterId: ${s(volume.dataCenterId)}`, vol: "1" });
   // por placa: primeiro a nuvem comunitária (mais barata), depois a segura
   for (const g of baratas) {
