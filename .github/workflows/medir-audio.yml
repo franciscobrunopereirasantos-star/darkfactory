@@ -1,0 +1,30 @@
+name: Medir áudio de clipes
+on:
+  workflow_dispatch:
+    inputs:
+      itens:
+        description: "ROTULO|URL separados por ;"
+        required: true
+jobs:
+  medir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: FFmpeg
+        run: |
+          timeout 240 sudo apt-get update -qq || true
+          timeout 240 sudo apt-get install -y -qq ffmpeg > /dev/null
+      - name: Medir
+        env:
+          ITENS: ${{ inputs.itens }}
+        run: |
+          IFS=';' read -ra A <<< "$ITENS"
+          for it in "${A[@]}"; do
+            r="${it%%|*}"; u="${it#*|}"
+            curl -fsSL --retry 3 -o c.mp4 "$u" || { echo "ERRO|$r"; continue; }
+            d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 c.mp4)
+            a=$(ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 c.mp4)
+            v=$(ffmpeg -nostdin -i c.mp4 -af volumedetect -vn -f null - 2>&1 | grep -E "mean_volume|max_volume" | awk '{print $5}' | paste -sd' ')
+            s=$(ffmpeg -nostdin -i c.mp4 -af silencedetect=n=-35dB:d=0.3 -vn -f null - 2>&1 | grep -c silence_end)
+            echo "AUDIO|$r|dur=$d|codec=${a:-nenhum}|mean_max=$v|trechos_silencio=$s"
+          done
