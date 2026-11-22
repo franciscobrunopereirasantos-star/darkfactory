@@ -1,0 +1,63 @@
+name: Quadros de video
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL do video"
+        required: true
+      tempos:
+        description: "Segundos separados por espaco (vazio = a cada 'passo' s)"
+        default: ""
+      passo:
+        description: "Intervalo em segundos quando tempos vazio"
+        default: "6"
+      nome:
+        description: "Prefixo dos arquivos (minusculas)"
+        default: "quadros"
+      pedido_id:
+        description: "Pedido da fabrica"
+        default: "1680e5d2-169b-4791-b497-e55cf8e89be5"
+jobs:
+  quadros:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Extrair
+        env:
+          URL: ${{ inputs.url }}
+          TEMPOS: ${{ inputs.tempos }}
+          PASSO: ${{ inputs.passo }}
+          NOME: ${{ inputs.nome }}
+        run: |
+          set +e
+          sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y ffmpeg >/dev/null
+          curl -sL "$URL" -o v.mp4
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 v.mp4)
+          echo "DURACAO $DUR"
+          mkdir -p q saida
+          if [ -z "$TEMPOS" ]; then TEMPOS=$(python3 -c "import sys;d=float('$DUR');p=float('$PASSO');print(' '.join(str(round(i*p,1)) for i in range(int(d//p)+1)))"); fi
+          i=0
+          for t in $TEMPOS; do
+            n=$(printf "%03d" $i)
+            ffmpeg -v error -ss $t -i v.mp4 -frames:v 1 -vf "scale=320:-2,drawtext=text='$t s':x=6:y=6:fontsize=22:fontcolor=yellow:box=1:boxcolor=black@0.6" q/$n.jpg
+            i=$((i+1))
+          done
+          ffmpeg -v error -pattern_type glob -i 'q/*.jpg' -vf "tile=6x$(( (i+5)/6 ))" -frames:v 1 "saida/${NOME}.jpg"
+          echo "--- volume por janela de 6s (dB medio) ---"
+          s=0
+          while python3 -c "import sys;sys.exit(0 if $s < float('$DUR') else 1)"; do
+            m=$(ffmpeg -v info -ss $s -t 6 -i v.mp4 -vn -af volumedetect -f null - 2>&1 | grep mean_volume | awk '{print $5}')
+            echo "VOL|$s|$m"
+            s=$((s+6))
+          done
+          ffmpeg -v info -i v.mp4 -vn -af silencedetect=n=-40dB:d=1.5 -f null - 2>&1 | grep -E 'silence_(start|end)'
+      - name: Enviar
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: ${{ inputs.pedido_id }}
+        run: node ferramentas/subir.mjs saida
