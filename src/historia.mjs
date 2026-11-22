@@ -10,6 +10,7 @@ import { ffmpeg, duracao, baixar, log } from "./util.mjs";
 import { vozElevenLabs } from "./voz.mjs";
 import { conferir } from "./conferencia.mjs";
 import { progresso, enviarArquivo } from "./api.mjs";
+import { srtDaTimeline, medirFalasNativas } from "./historia-legendas.mjs";
 
 const FONTES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fonts");
 const FONTE = path.join(FONTES, "Inter-Bold.otf");
@@ -81,7 +82,7 @@ export async function prepararHistoria(pedido, pasta) {
 
 /** Lista de clipes que a GPU precisa gerar para este pedido. */
 export const trabalhosGpu = (pedido, plano) =>
-  plano.filter((c) => c.tipo === "clipe").map((c) => ({
+  plano.filter((c) => c.tipo === "clipe" && !c.clipePronto).map((c) => ({
     pedido_id: pedido.id, cena: c.id, seed: 1000 + c.n, imagem_url: c.imagem_url, prompt: c.prompt, dur: Number(c.durClipe.toFixed(3)),
     nome: `clipes/cena-${segura(c.id)}.mp4`,
   }));
@@ -308,7 +309,7 @@ async function codificar(video, audio, ass, saida, maxMB, extraVf = "") {
   const kbps = Math.max(800, Math.min(4000, Math.floor(((maxMB * 0.92 * 8 * 1024) / dur) - 192)));
   await ffmpeg([
     "-i", video, "-i", audio,
-    "-vf", `${extraVf}ass=${ass}:fontsdir=${FONTES}`,
+    ...(ass ? ["-vf", `${extraVf}ass=${ass}:fontsdir=${FONTES}`] : extraVf ? ["-vf", extraVf.replace(/,$/, "")] : []),
     "-c:v", "libx264", "-preset", "medium", "-crf", "21", "-maxrate", `${kbps}k`, "-bufsize", `${kbps * 2}k`, "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-shortest", saida,
   ]);
@@ -358,7 +359,7 @@ async function montarCorte(pedido, e, d, tempos, pasta, lista) {
   const sass = path.join(sp, "short.ass");
   fs.writeFileSync(sass, arquivoAss(legS, 1080, 1920, 64, 520));
   const saida = path.join(pasta, `${nome}.mp4`);
-  await codificar(vert, smix, sass, saida, 60);
+  await codificar(vert, smix, e.legenda_gravada === false ? null : sass, saida, 60);
   const conf = await conferir(saida, { dims: { W: 1080, H: 1920 }, duracaoEsperada: corpo + fim, maxMB: 60, rotulo: `${nome}_` });
   const ds = conf.resultado.duracao_seg;
   const [lo, hi] = d.legado ? [45, 60.5] : [50, 78.5];
@@ -376,7 +377,8 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   const vertical = e.aspecto === "9:16";
   [W, H] = vertical ? [1080, 1920] : [1280, 720];
   const regras = [];
-  const segs = [], auds = [], legendas = [], tempos = [], parados = [];
+  const segs = [], auds = [], legendas = [], tempos = [], parados = [], timelineFalas = [];
+  let aberturaS = 0;
   let t = 0;
   await progresso(pedido.id, "montagem", 70, `Montando ${plano.length} cenas`);
   for (let i = 0; i < plano.length; i++) {
@@ -409,8 +411,13 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
       seg = await segmentoClipe(arq, c, pasta, nome);
       if (c.congelado > 0.05) parados.push({ inicio: t + c.durClipe, fim: t + c.durCena });
     }
+    c.durCena = await duracao(seg); // duração real do segmento final
     segs.push(seg);
     auds.push(await audioCena(c, pasta, nome));
+    if (c.voz_nativa) {
+      try { await medirFalasNativas(c); } catch (err) { log(`legenda: ${String(err?.message || err)}; usando tempo estimado`); }
+    }
+    for (const f of c.falas) timelineFalas.push({ cena: c.id, falante: f.falante, texto: f.texto, inicio_s: t + (f.inicio || 0), fim_s: Math.min(t + c.durCena, t + (f.inicio || 0) + (f.dur || c.durCena)), timing_origem: f.timing_origem || "estimado" });
     for (const f of c.falas) legendas.push(...legendasDaFala(f, t));
     tempos.push({ cena: c.id, inicio: t, fim: t + c.durCena, clipe: seg, audio: auds[auds.length - 1], c });
     t += c.durCena;
@@ -436,7 +443,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   const ass = path.join(pasta, "historia.ass");
   fs.writeFileSync(ass, vertical ? arquivoAss(legendas, W, H, 64, 520) : arquivoAss(legendas, W, H, 48, 36));
   const final = path.join(pasta, "video.mp4");
-  await codificar(video, mix, ass, final, 90);
+  await codificar(video, mix, e.legenda_gravada === false ? null : ass, final, 90);
 
   await progresso(pedido.id, "conferencia", 85, "Conferindo o vídeo");
   const conf = await conferir(final, { dims: { W, H }, duracaoEsperada: t, tempos, maxMB: 90, paradoPermitido: parados });
@@ -474,6 +481,7 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
         "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart", comAb], { timeoutMin: 8 });
       fs.renameSync(comAb, final);
+      aberturaS = await duracao(ab);
       regras.push({ regra: "vinheta_inicio", ok: true, detalhe: `vinheta de ${(await duracao(ab)).toFixed(1)} s adicionada` });
     } catch (err) {
       regras.push({ regra: "vinheta_inicio", ok: false, detalhe: String(err?.message || err).slice(0, 300) });
@@ -483,15 +491,19 @@ export async function montarHistoria(pedido, plano, clipes, pasta, extras = {}) 
   const falhas = regras.filter((r) => !r.ok);
   const graves = conf.status === "falhou";
   const status = graves ? "falhou" : falhas.length ? "revisar" : "pronto";
-  let video_url = null;
+  let video_url = null, legendaUrl = null;
+  const timelineFinal = timelineFalas.map((f) => ({ ...f, inicio_s: f.inicio_s + aberturaS, fim_s: f.fim_s + aberturaS }));
+  const srt = path.join(pasta, "legendas.pt-BR.srt");
+  fs.writeFileSync(srt, srtDaTimeline(timelineFinal), "utf8");
   if (!graves) {
     await progresso(pedido.id, "entrega", 95, "Enviando o vídeo");
     video_url = await enviarArquivo(pedido.id, "video.mp4", final);
+    try { legendaUrl = await enviarArquivo(pedido.id, "legendas.pt-BR.srt", srt, "application/x-subrip"); } catch (err) { log(`legenda: envio falhou ${String(err?.message || err)}`); }
   }
   log(`historia ${pedido.id.slice(0, 8)}…: ${status} (${t.toFixed(1)} s)`);
   return {
     status,
-    resultado: { ...conf.resultado, video_url, short_url: shortUrl, short_duracao_seg: confShort?.resultado?.duracao_seg, cortes, cenas: plano.length, ...extras },
+    resultado: { ...conf.resultado, legendas: { "pt-BR": legendaUrl }, timeline_falas: timelineFinal, legenda_gravada: e.legenda_gravada !== false, abertura_s: aberturaS, video_url, short_url: shortUrl, short_duracao_seg: confShort?.resultado?.duracao_seg, cortes, cenas: plano.length, ...extras },
     conferencia: { regras },
     erro: falhas.length ? falhas.map((r) => `${r.regra}: ${r.detalhe}`).join("; ").slice(0, 1000) : null,
   };
