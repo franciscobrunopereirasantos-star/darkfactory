@@ -54,7 +54,7 @@ jobs:
             echo "VOL|$s|$m"
             s=$((s+6))
           done
-          ffmpeg -v info -i v.mp4 -vn -af silencedetect=n=-40dB:d=1.5 -f null - 2>&1 | grep -E 'silence_(start|end)'
+          ffmpeg -v info -i v.mp4 -vn -af silencedetect=n=-40dB:d=1.5 -f null - 2>&1 | grep -E 'silence_(start|end)' || echo "sem silencios"
       - name: Enviar
         env:
           FABRICA_URL: ${{ secrets.FABRICA_URL }}
