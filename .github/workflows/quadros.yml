@@ -11,6 +11,12 @@ on:
       passo:
         description: "Intervalo em segundos quando tempos vazio"
         default: "6"
+      largura:
+        description: "Largura de cada quadro"
+        default: "320"
+      colunas:
+        description: "Quadros por linha"
+        default: "6"
       nome:
         description: "Prefixo dos arquivos (minusculas)"
         default: "quadros"
@@ -32,6 +38,8 @@ jobs:
           TEMPOS: ${{ inputs.tempos }}
           PASSO: ${{ inputs.passo }}
           NOME: ${{ inputs.nome }}
+          LARG: ${{ inputs.largura }}
+          COLS: ${{ inputs.colunas }}
         run: |
           set +e
           sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y ffmpeg >/dev/null
@@ -43,10 +51,10 @@ jobs:
           i=0
           for t in $TEMPOS; do
             n=$(printf "%03d" $i)
-            ffmpeg -v error -ss $t -i v.mp4 -frames:v 1 -vf "scale=320:-2,drawtext=text='$t s':x=6:y=6:fontsize=22:fontcolor=yellow:box=1:boxcolor=black@0.6" q/$n.jpg
+            ffmpeg -v error -ss $t -i v.mp4 -frames:v 1 -vf "scale=$LARG:-2,drawtext=text='$t s':x=6:y=6:fontsize=22:fontcolor=yellow:box=1:boxcolor=black@0.6" q/$n.jpg
             i=$((i+1))
           done
-          ffmpeg -v error -pattern_type glob -i 'q/*.jpg' -vf "tile=6x$(( (i+5)/6 ))" -frames:v 1 "saida/${NOME}.jpg"
+          ffmpeg -v error -pattern_type glob -i 'q/*.jpg' -vf "tile=${COLS}x$(( (i+COLS-1)/COLS ))" -frames:v 1 "saida/${NOME}.jpg"
           echo "--- volume por janela de 6s (dB medio) ---"
           s=0
           while python3 -c "import sys;sys.exit(0 if $s < float('$DUR') else 1)"; do
