@@ -1,0 +1,46 @@
+name: Recorte de video
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL do video"
+        required: true
+      inicio:
+        description: "Inicio em segundos"
+        default: "0"
+      duracao:
+        description: "Duracao em segundos"
+        default: "45"
+      nome:
+        description: "Nome do arquivo (minusculas, sem extensao)"
+        default: "recorte"
+      pedido_id:
+        description: "Pedido da fabrica"
+        default: "1680e5d2-169b-4791-b497-e55cf8e89be5"
+jobs:
+  recorte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Recortar
+        env:
+          URL: ${{ inputs.url }}
+          INI: ${{ inputs.inicio }}
+          DUR: ${{ inputs.duracao }}
+          NOME: ${{ inputs.nome }}
+        run: |
+          sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y ffmpeg >/dev/null
+          curl -sL "$URL" -o v.mp4
+          mkdir -p saida
+          ffmpeg -v error -ss "$INI" -i v.mp4 -t "$DUR" -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k -movflags +faststart "saida/${NOME}.mp4"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "saida/${NOME}.mp4"
+      - name: Enviar
+        env:
+          FABRICA_URL: ${{ secrets.FABRICA_URL }}
+          FABRICA_WORKER_TOKEN: ${{ secrets.FABRICA_WORKER_TOKEN }}
+          PEDIDO_ID: ${{ inputs.pedido_id }}
+        run: node ferramentas/subir.mjs saida
