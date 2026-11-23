@@ -14,6 +14,33 @@ POD = os.environ.get("RUNPOD_POD_ID", "")
 CUSTO_HORA = float(os.environ.get("CUSTO_HORA", "0") or 0)
 OCIOSA_MIN = float(os.environ.get("GPU_OCIOSA_MIN", "10"))
 INICIO_POD = float(os.environ.get("INICIO_POD", time.time()))
+# Trava (F15): se a GPU ficar TRAVADA_MIN minutos sem nenhum progresso, o processo encerra e o pod.sh desliga a GPU
+# (para de cobrar). O job fica em 'processando' e a fábrica o reabre e religa a GPU sozinha depois de 15 min.
+TRAVADA_MIN = float(os.environ.get("GPU_TRAVADA_MIN", "20"))
+ultimo_progresso = {"t": time.time(), "onde": "inicio"}
+
+
+def marcar(onde):
+    ultimo_progresso["t"] = time.time()
+    ultimo_progresso["onde"] = onde
+
+
+def vigia_trava():
+    while True:
+        time.sleep(30)
+        if ultimo_progresso.get("baixando"):  # download de pesos grandes pode passar do limite: não conta como trava
+            marcar("baixando pesos")
+            continue
+        parado = time.time() - ultimo_progresso["t"]
+        if parado > TRAVADA_MIN * 60:
+            msg = f"GPU travada: {parado / 60:.0f} min sem progresso (em {ultimo_progresso['onde']}); desligando para não cobrar"
+            print(f"[servidor] {msg}", flush=True)
+            try:
+                api("gpu/sinal", {"pod_id": POD, "gpu": estado["gpu"], "estado": "travada", "custo_hora": CUSTO_HORA,
+                                  "mensagem": msg, "segundos_desde_ligar": round(time.time() - INICIO_POD)}, timeout=15)
+            except Exception:  # noqa
+                pass
+            os._exit(3)
 DESTILADO = dict(guidance_scale=1.0, stg_scale=0.0, modality_scale=1.0, guidance_rescale=0.0,
                  audio_guidance_scale=1.0, audio_stg_scale=0.0, audio_modality_scale=1.0, audio_guidance_rescale=0.0)
 estado = {"estado": "ligando", "gpu": ""}
@@ -41,6 +68,7 @@ def batimento():
 
 
 def progresso(job, msg, dados=None):
+    marcar(f"job {job}")
     print(f"[servidor] {job}: {msg}", flush=True)
     try:
         api("jobs/progresso", {"job_id": job, "mensagem": msg[:1900], "dados": dados or {}})
@@ -115,8 +143,13 @@ class Motor:
             if not os.path.isfile(os.path.join(completo, ".ok")):
                 from huggingface_hub import snapshot_download
                 t = time.time()
-                snapshot_download("Lightricks/LTX-2.5-Diffusers", local_dir=MODELO, allow_patterns=["transformer_full/*"],
-                                  token=os.environ.get("HF_TOKEN") or None)
+                ultimo_progresso["baixando"] = True
+                try:
+                    snapshot_download("Lightricks/LTX-2.5-Diffusers", local_dir=MODELO, allow_patterns=["transformer_full/*"],
+                                      token=os.environ.get("HF_TOKEN") or None)
+                finally:
+                    ultimo_progresso["baixando"] = False
+                    marcar("transformer_full baixado")
                 open(os.path.join(completo, ".ok"), "w").write("ok")
                 print(f"[servidor] transformer_full baixado em {time.time() - t:.0f} s", flush=True)
             tcls = type(self.pipe.transformer)
@@ -158,7 +191,12 @@ class Motor:
         if not os.path.isfile(os.path.join(QWEN_DIR, ".ok")):
             from huggingface_hub import snapshot_download
             t = time.time()
-            snapshot_download(QWEN_REPO, local_dir=QWEN_DIR, token=os.environ.get("HF_TOKEN") or None)
+            ultimo_progresso["baixando"] = True
+            try:
+                snapshot_download(QWEN_REPO, local_dir=QWEN_DIR, token=os.environ.get("HF_TOKEN") or None)
+            finally:
+                ultimo_progresso["baixando"] = False
+                marcar("Qwen baixado")
             open(os.path.join(QWEN_DIR, ".ok"), "w").write("ok")
             print(f"[servidor] pesos do Qwen baixados em {time.time() - t:.0f} s", flush=True)
         self.pipe = QwenImageEditPlusPipeline.from_pretrained(QWEN_DIR, torch_dtype=torch.bfloat16)
@@ -423,10 +461,12 @@ def main():
     from concurrent.futures import ThreadPoolExecutor
     estado["gpu"] = torch.cuda.get_device_name(0)
     threading.Thread(target=batimento, daemon=True).start()
+    threading.Thread(target=vigia_trava, daemon=True).start()
     motor = Motor()
     t0 = time.time()
     motor.carregar("i2v")
     estado["estado"] = "ligada"
+    marcar("LTX carregado")
     sinal()
     print(f"[servidor] LTX carregado em {time.time() - t0:.0f} s na {estado['gpu']} ({motor.modo})", flush=True)
 
@@ -440,6 +480,7 @@ def main():
             api("jobs/concluir", {"job_id": job["id"], "status": "pronto", "resultado": resultado,
                                   "segundos_gpu": round(gpu_s, 1), "gpu": estado["gpu"],
                                   "custo_usd": round(gpu_s / 3600 * CUSTO_HORA, 4)})
+            marcar(f"job {job['id']} entregue")
             print(f"[servidor] {job['id']}: pronto ({gpu_s:.0f} s de GPU, {time.time() - t_job:.0f} s no total)", flush=True)
         except Exception:  # noqa
             concluir_falha(job["id"])
@@ -476,6 +517,7 @@ def main():
                 print(f"[servidor] {OCIOSA_MIN:.0f} min sem trabalho: encerrando", flush=True)
                 fundo.shutdown(wait=True)
                 return
+            marcar("ociosa")
             time.sleep(15)
             continue
         estado["estado"] = "ligada"
@@ -487,6 +529,7 @@ def main():
             else:
                 finalizar, gpu_s = gerar_clipe(motor, job)
             pendentes.append(fundo.submit(entregar, job, finalizar, gpu_s, t_job))
+            marcar(f"job {job['id']} gerado")
         except Exception:  # noqa
             concluir_falha(job["id"])
         ociosa_desde = time.time()
