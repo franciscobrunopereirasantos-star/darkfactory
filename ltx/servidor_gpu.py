@@ -252,17 +252,130 @@ def carregar_motor(motor, base, alta, job):
     return False
 
 
+AUDIO_SR = 16000  # entrada do VAE de áudio do LTX-2 (mel 64 bins, hop 160, n_fft 1024)
+
+
+def _hz_para_mel_slaney(f):
+    f = torch.as_tensor(f, dtype=torch.float64)
+    f_sp, min_log_hz, min_log_mel, logstep = 200.0 / 3, 1000.0, 15.0, math.log(6.4) / 27.0
+    mel = f / f_sp
+    return torch.where(f >= min_log_hz, min_log_mel + torch.log(torch.clamp(f, min=1e-10) / min_log_hz) / logstep, mel)
+
+
+def _mel_para_hz_slaney(m):
+    m = torch.as_tensor(m, dtype=torch.float64)
+    f_sp, min_log_hz, min_log_mel, logstep = 200.0 / 3, 1000.0, 15.0, math.log(6.4) / 27.0
+    return torch.where(m >= min_log_mel, min_log_hz * torch.exp(logstep * (m - min_log_mel)), f_sp * m)
+
+
+def banco_mel(sr=AUDIO_SR, n_fft=1024, n_mels=64):
+    """Banco de filtros mel igual ao torchaudio (mel_scale="slaney", norm="slaney", f_min=0, f_max=sr/2),
+    sem depender do torchaudio (não está instalado no pod). Saída: [n_freqs, n_mels]."""
+    n_freqs = n_fft // 2 + 1
+    freqs = torch.linspace(0, sr / 2, n_freqs, dtype=torch.float64)
+    m_pts = torch.linspace(float(_hz_para_mel_slaney(0.0)), float(_hz_para_mel_slaney(sr / 2)), n_mels + 2, dtype=torch.float64)
+    f_pts = _mel_para_hz_slaney(m_pts)
+    f_diff = f_pts[1:] - f_pts[:-1]
+    slopes = f_pts.unsqueeze(0) - freqs.unsqueeze(1)
+    down = -slopes[:, :-2] / f_diff[:-1]
+    up = slopes[:, 2:] / f_diff[1:]
+    fb = torch.clamp(torch.minimum(down, up), min=0.0)
+    fb = fb * (2.0 / (f_pts[2:n_mels + 2] - f_pts[:n_mels])).unsqueeze(0)
+    return fb.float()
+
+
+def log_mel(onda, sr=AUDIO_SR, n_fft=1024, hop=160, n_mels=64):
+    """Onda [canais, amostras] (16 kHz) → log-mel [1, canais, tempo, n_mels], como o AudioProcessor do LTX-2
+    (MelSpectrogram power=1, janela hann, center=True, reflect; log(clamp(1e-5)))."""
+    espec = torch.stft(onda.float(), n_fft=n_fft, hop_length=hop, win_length=n_fft, window=torch.hann_window(n_fft),
+                       center=True, pad_mode="reflect", return_complex=True).abs()  # [C, freqs, T]
+    mel = torch.matmul(espec.transpose(1, 2), banco_mel(sr, n_fft, n_mels))  # [C, T, n_mels]
+    return torch.log(torch.clamp(mel, min=1e-5)).unsqueeze(0)
+
+
+def ler_audio(caminho, sr=AUDIO_SR, segundos=None):
+    """Decodifica qualquer áudio (mp3/wav/m4a) com o ffmpeg em estéreo float32 → tensor [2, amostras]."""
+    import numpy as np
+    import imageio_ffmpeg
+    cmd = [imageio_ffmpeg.get_ffmpeg_exe(), "-loglevel", "error", "-i", caminho, "-ac", "2", "-ar", str(sr), "-f", "f32le", "-"]
+    bruto = subprocess.run(cmd, check=True, capture_output=True).stdout
+    onda = torch.from_numpy(np.frombuffer(bruto, dtype=np.float32).copy()).view(-1, 2).t().contiguous()
+    if segundos is not None:
+        alvo = int(round(segundos * sr))
+        onda = onda[:, :alvo] if onda.shape[1] >= alvo else torch.nn.functional.pad(onda, (0, alvo - onda.shape[1]))
+    return onda
+
+
+def baixar_arquivo(url, destino):
+    req = urllib.request.Request(url, headers={"user-agent": "darkfactory-gpu"})
+    with urllib.request.urlopen(req, timeout=120) as r, open(destino, "wb") as f:
+        f.write(r.read())
+    return destino
+
+
+def duracao_audio(caminho):
+    return ler_audio(caminho).shape[1] / AUDIO_SR
+
+
+def latentes_audio_fixo(pipe, caminho, segundos):
+    """Voz fixa sincronizada (F-voz, 27/11): codifica a fala pronta (ElevenLabs) no VAE de áudio do LTX e devolve
+    os latentes já normalizados e empacotados, no formato que o transformer recebe em audio_hidden_states."""
+    onda = ler_audio(caminho, segundos=segundos)
+    mel = log_mel(onda)
+    vae = pipe.audio_vae
+    dispositivo = next(vae.parameters()).device
+    tipo = next(vae.parameters()).dtype
+    with torch.no_grad():
+        dist = vae.encode(mel.to(dispositivo, tipo)).latent_dist
+        bruto = dist.mode() if hasattr(dist, "mode") else dist.mean  # [1, 8, L, 16]
+    # o encoder causal devolve 1 quadro a mais; corta no tamanho que o pipeline usaria para essa duração (como o LTX oficial)
+    por_s = getattr(pipe, "audio_sampling_rate", AUDIO_SR) / getattr(pipe, "audio_hop_length", 160) \
+        / float(getattr(pipe, "audio_vae_temporal_compression_ratio", 4))
+    bruto = bruto[:, :, :max(1, round(segundos * por_s))]
+    limpo = pipe.prepare_audio_latents(latents=bruto.float(), noise_scale=0.0, dtype=torch.float32, device="cuda")
+    print(f"[servidor] voz fixa: {segundos:.2f} s → mel {tuple(mel.shape)} → latentes {tuple(bruto.shape)}", flush=True)
+    return bruto, limpo
+
+
+def congelar_audio(transformer, limpo):
+    """Durante toda a amostragem o transformer recebe o áudio LIMPO (timestep 0) no lugar do áudio que estaria sendo
+    gerado: o vídeo é guiado pela fala pronta e a boca acompanha. Mesma ideia do A2VidPipeline oficial (áudio
+    'frozen', noise_scale 0). Devolve o handle para remover o gancho depois."""
+    def gancho(_modulo, args, kwargs):
+        if "audio_hidden_states" in kwargs and kwargs["audio_hidden_states"] is not None:
+            atual = kwargs["audio_hidden_states"]
+            kwargs["audio_hidden_states"] = limpo.to(atual.device, atual.dtype).expand(atual.shape[0], -1, -1)
+            if kwargs.get("audio_timestep") is not None:
+                kwargs["audio_timestep"] = torch.zeros_like(kwargs["audio_timestep"])
+            if kwargs.get("sigma") is not None:  # modelos que modulam pelo sigma: o do áudio também é 0 (áudio limpo)
+                kwargs["audio_sigma"] = torch.zeros_like(kwargs["sigma"])
+        return args, kwargs
+    return transformer.register_forward_pre_hook(gancho, with_kwargs=True)
+
+
 def gerar_clipe(motor, job):
     from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
     from diffusers.utils import encode_video, load_image
     import imageio_ffmpeg
 
     e = job.get("entrada") or {}
+    # Voz fixa sincronizada: a fala chega pronta (audio_url, voz fixa do personagem) e o LTX só anima seguindo o áudio.
+    audio_fixo = None
+    if e.get("audio_url"):
+        audio_fixo = baixar_arquivo(e["audio_url"], f"/root/fala-{job['id']}")
+        dur_fala = duracao_audio(audio_fixo)
+        folga = float(e.get("folga_s") if e.get("folga_s") is not None else 0.3)
+        e = dict(e, duracao_s=max(float(e.get("duracao_s") or 0), dur_fala + folga))
+        progresso(job["id"], f"voz fixa: fala de {dur_fala:.2f} s, clipe de {min(10.0, e['duracao_s']):.2f} s")
     dur = max(2.0, min(10.0, float(e.get("duracao_s") or 5)))
     seed = int(e.get("seed") or 1000)
     prompt = e.get("prompt_movimento") or e.get("prompt") or ""
     # Voz nativa (padrão das novelas desde 18/11): o próprio LTX gera a fala junto com o vídeo (boca sincronizada).
-    nativa = bool(e.get("voz_nativa")) and bool(str(e.get("fala_texto") or "").strip())
+    nativa = audio_fixo is None and bool(e.get("voz_nativa")) and bool(str(e.get("fala_texto") or "").strip())
+    if audio_fixo is not None:
+        prompt = (prompt.rstrip(". ") + ". Only this character speaks, perfect lip sync"
+                  + (", saying: \"" + str(e["fala_texto"]).strip() + "\"" if str(e.get("fala_texto") or "").strip() else "")
+                  + ". The mouth moves only while the voice is heard and is closed and still before and after.")
     if nativa:
         prompt = (prompt.rstrip(". ") + ". Only this character speaks, in Brazilian Portuguese, with "
                   + (e.get("voz_descricao") or "an expressive voice") + ", perfect lip sync, saying: \""
@@ -312,28 +425,18 @@ def gerar_clipe(motor, job):
                 kwargs["callback_on_step_end"] = a_cada_passo
         except Exception:  # noqa
             pass
+    gancho = None
+    if audio_fixo is not None:
+        bruto_lat, limpo = latentes_audio_fixo(motor.pipe, audio_fixo, gerar / 24.0)
+        kwargs["audio_latents"] = bruto_lat.float()
+        gancho = congelar_audio(motor.pipe.transformer, limpo)
     t1 = time.time()
-    for tentativa in range(3):
-        try:
-            try:
-                video, audio_ltx = motor.pipe(**kwargs)
-            except (TypeError, ValueError) as erro:
-                if not alta:
-                    raise
-                # se o modo alto não for aceito por este checkpoint, entrega no modo rápido em vez de falhar
-                progresso(job["id"], f"qualidade alta recusada ({str(erro)[:200]}): gerando no modo rápido")
-                for k in ("num_inference_steps", "negative_prompt", "callback_on_step_end"):
-                    kwargs.pop(k, None)
-                kwargs.update(sigmas=DISTILLED_SIGMA_VALUES, **DESTILADO)
-                alta = False
-                video, audio_ltx = motor.pipe(**kwargs)
-            break
-        except torch.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            if tentativa < 2 and motor.sequencial():
-                progresso(job["id"], "sem memória: mudando para descarregamento sequencial")
-                continue
-            raise
+    try:
+        video, audio_ltx = _amostrar(motor, kwargs, alta, job, DISTILLED_SIGMA_VALUES)
+    finally:
+        if gancho is not None:
+            gancho.remove()
+    alta = kwargs.pop("_alta_final", alta)
     gpu_s = time.time() - t1
     quadros_np = video[0]
     audio_np = audio_ltx[0].float().cpu() if (nativa and audio_ltx is not None) else None
@@ -349,23 +452,56 @@ def gerar_clipe(motor, job):
         else:
             encode_video(quadros_np, fps=24, output_path=bruto)
         escala = "720:1280" if h > w else "1280:720"
-        subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-i", bruto, "-frames:v", str(quadros),
+        tem_audio = audio_np is not None or audio_fixo is not None
+        entradas = ["-i", bruto] + (["-i", audio_fixo] if audio_fixo is not None else [])
+        # voz fixa: a fala original (ElevenLabs) vai intacta para o clipe, completada com silêncio até o fim
+        mapa = (["-map", "0:v:0", "-map", "1:a:0", "-af", "apad", "-t", f"{quadros / 24:.3f}"] if audio_fixo is not None else [])
+        subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", *entradas, *mapa, "-frames:v", str(quadros),
                         "-vf", f"scale={escala}:flags=lanczos,setsar=1", "-r", "24",
-                        *(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"] if audio_np is not None else ["-an"]),
+                        *(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"] if tem_audio else ["-an"]),
                         "-c:v", "libx264", "-crf", "16",
                         "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", final], check=True)
         url = enviar(job["id"], final, "clipe.mp4")
-        for f in (bruto, final):
+        for f in (bruto, final, audio_fixo):
             try:
-                os.remove(f)
+                if f:
+                    os.remove(f)
             except OSError:
                 pass
         ew, eh = (int(x) for x in escala.split(":"))
         return {"url": url, "duracao_s": round(quadros / 24, 3), "largura": ew, "altura": eh, "quadros": quadros,
-                "modo": modo + ("+alta" if alta else "") + ("+voz" if audio_np is not None else ""), "seed": seed,
-                "tem_audio": audio_np is not None}
+                "modo": modo + ("+alta" if alta else "") + ("+voz" if audio_np is not None else "")
+                + ("+voz-fixa" if audio_fixo is not None else ""), "seed": seed,
+                "tem_audio": tem_audio, "voz_fixa": audio_fixo is not None}
 
     return finalizar, gpu_s
+
+
+def _amostrar(motor, kwargs, alta, job, DISTILLED_SIGMA_VALUES):
+    """Roda o pipeline com as mesmas proteções de antes (alta recusada → rápido; falta de memória → offload).
+    Se cair para o rápido, grava kwargs["_alta_final"] = False para o resultado informar o modo real."""
+    for tentativa in range(3):
+        try:
+            try:
+                return motor.pipe(**kwargs)
+            except (TypeError, ValueError) as erro:
+                if not alta:
+                    raise
+                # se o modo alto não for aceito por este checkpoint, entrega no modo rápido em vez de falhar
+                progresso(job["id"], f"qualidade alta recusada ({str(erro)[:200]}): gerando no modo rápido")
+                for k in ("num_inference_steps", "negative_prompt", "callback_on_step_end"):
+                    kwargs.pop(k, None)
+                kwargs.update(sigmas=DISTILLED_SIGMA_VALUES, **DESTILADO)
+                alta = False
+                resultado = motor.pipe(**kwargs)
+                kwargs["_alta_final"] = False
+                return resultado
+        except torch.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            if tentativa < 2 and motor.sequencial():
+                progresso(job["id"], "sem memória: mudando para descarregamento sequencial")
+                continue
+            raise
 
 
 def limpar_disco(minimo_gb=15):
